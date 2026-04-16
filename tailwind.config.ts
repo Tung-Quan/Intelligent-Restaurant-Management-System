@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 export default {
   darkMode: ["class"],
@@ -12,8 +13,10 @@ export default {
     },
     extend: {
       fontFamily: {
-        heading: ["Space Grotesk", "system-ui", "sans-serif"],
-        body: ["Inter", "system-ui", "sans-serif"],
+        brand: ["Syne Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        heading: ["Azeret Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        body: ["Azeret Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        panel: ["Martian Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -61,5 +64,5 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 } satisfies Config;
