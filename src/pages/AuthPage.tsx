@@ -22,11 +22,20 @@ export default function AuthPage() {
       if (isLogin) {
         await signIn(email, password);
       } else {
-        await signUp(email, password, displayName);
-        toast({ title: "Account created!", description: "Check your email to verify your account." });
+        const result = await signUp(email, password, displayName);
+        toast({
+          title: "Account created!",
+          description: result.emailVerificationRequired
+            ? "Check your email to verify your account."
+            : "Your account has been created and signed in successfully.",
+        });
       }
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "An unexpected error occurred.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -40,8 +49,8 @@ export default function AuthPage() {
             <UtensilsCrossed className="h-7 w-7 text-primary-foreground" />
           </div>
           <div>
-            <CardTitle className="font-heading text-2xl">IRMS</CardTitle>
-            <CardDescription>Intelligent Restaurant Management System</CardDescription>
+            <CardTitle className="font-brand text-2xl">IRMS</CardTitle>
+            <CardDescription className="font-heading">Intelligent Restaurant Management System</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
@@ -49,6 +58,7 @@ export default function AuthPage() {
             {!isLogin && (
               <Input
                 placeholder="Display Name"
+                autoComplete="name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 required
@@ -57,6 +67,7 @@ export default function AuthPage() {
             <Input
               type="email"
               placeholder="Email"
+              autoComplete={isLogin ? "email" : "username"}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -64,6 +75,7 @@ export default function AuthPage() {
             <Input
               type="password"
               placeholder="Password"
+              autoComplete={isLogin ? "current-password" : "new-password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
