@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
+import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Send } from "lucide-react";
@@ -25,6 +24,17 @@ interface Table {
   table_number: number;
 }
 
+interface OrderSummary {
+  id: string;
+  status: string;
+  total_amount: number;
+  items: {
+    id: string;
+    menu_item_name: string;
+    quantity: number;
+  }[];
+}
+
 interface OrderItem {
   menuItemId: string;
   name: string;
@@ -40,22 +50,28 @@ export default function OrdersPage() {
   const [selectedTable, setSelectedTable] = useState("");
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [orders, setOrders] = useState<any[]>([]);
-  const { user } = useAuth();
+  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
   const { toast } = useToast();
 
-  useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = async () => {
+    try {
       const [menuRes, tableRes, orderRes] = await Promise.all([
-        supabase.from("menu_items").select("*").eq("is_available", true),
-        supabase.from("restaurant_tables").select("id, table_number").order("table_number"),
-        supabase.from("orders").select("*, order_items(*, menu_items(name))").order("created_at", { ascending: false }).limit(20),
+        api.get<MenuItem[]>("/menu-items?is_available=true"),
+        api.get<Table[]>("/tables?sort=table_number"),
+        api.get<OrderSummary[]>("/orders?include=items,items.menu_item&limit=20&sort=-created_at"),
       ]);
-      if (menuRes.data) setMenuItems(menuRes.data);
-      if (tableRes.data) setTables(tableRes.data);
-      if (orderRes.data) setOrders(orderRes.data);
-    };
-    fetchData();
+
+      setMenuItems(menuRes);
+      setTables(tableRes);
+      setOrders(orderRes);
+    } finally {
+      setInitialLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchData();
   }, []);
 
   const addToCart = (item: MenuItem) => {
@@ -78,36 +94,33 @@ export default function OrdersPage() {
       return;
     }
 
-    const { data: order, error } = await supabase.from("orders").insert({
-      table_id: selectedTable,
-      server_id: user?.id,
-      special_instructions: specialInstructions || null,
-      subtotal: total,
-      tax: total * 0.1,
-      total_amount: total * 1.1,
-    }).select().single();
+    try {
+      await api.post("/orders", {
+        table_id: selectedTable,
+        special_instructions: specialInstructions || null,
+        items: cart.map((c) => ({
+          menu_item_id: c.menuItemId,
+          quantity: c.quantity,
+          unit_price: c.price,
+          notes: c.notes || "",
+        })),
+      });
 
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+      await api.patch(`/tables/${selectedTable}/status`, { status: "occupied" });
 
-    const items = cart.map((c) => ({
-      order_id: order.id,
-      menu_item_id: c.menuItemId,
-      quantity: c.quantity,
-      unit_price: c.price,
-      notes: c.notes || null,
-    }));
-
-    await supabase.from("order_items").insert(items);
-    await supabase.from("restaurant_tables").update({ status: "occupied" }).eq("id", selectedTable);
-
-    toast({ title: "Order placed!" });
-    setCart([]);
-    setSelectedTable("");
-    setSpecialInstructions("");
-    setDialogOpen(false);
-
-    const { data } = await supabase.from("orders").select("*, order_items(*, menu_items(name))").order("created_at", { ascending: false }).limit(20);
-    if (data) setOrders(data);
+      toast({ title: "Order placed!" });
+      setCart([]);
+      setSelectedTable("");
+      setSpecialInstructions("");
+      setDialogOpen(false);
+      await fetchData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to place order",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -187,15 +200,28 @@ export default function OrdersPage() {
       />
 
       <div className="space-y-3">
-        {orders.map((order) => (
+        {initialLoading &&
+          Array.from({ length: 4 }).map((_, index) => (
+            <Card key={`order-skeleton-${index}`} className="animate-fade-in">
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="space-y-2">
+                  <Skeleton className="h-5 w-32" />
+                  <Skeleton className="h-4 w-72" />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-6 w-20" />
+                  <Skeleton className="h-7 w-24 rounded-full" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        {!initialLoading && orders.map((order) => (
           <Card key={order.id} className="animate-fade-in">
             <CardContent className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <div>
                   <p className="font-medium text-sm">Order #{order.id.slice(0, 8)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {order.order_items?.map((i: any) => `${i.menu_items?.name} x${i.quantity}`).join(", ") || "No items"}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{order.items?.map((i) => `${i.menu_item_name} x${i.quantity}`).join(", ") || "No items"}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -205,7 +231,7 @@ export default function OrdersPage() {
             </CardContent>
           </Card>
         ))}
-        {orders.length === 0 && (
+        {!initialLoading && orders.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">No orders yet. Create your first order!</div>
         )}
       </div>

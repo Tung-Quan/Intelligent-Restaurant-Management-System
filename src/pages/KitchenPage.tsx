@@ -1,48 +1,45 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Clock, ChefHat } from "lucide-react";
 
 interface KitchenOrder {
   id: string;
   created_at: string;
   special_instructions: string | null;
-  order_items: {
+  items: {
     id: string;
     quantity: number;
     status: string;
     notes: string | null;
-    menu_items: { name: string; prep_time_minutes: number | null } | null;
+    menu_item: { name: string; prep_time_minutes: number | null } | null;
   }[];
 }
 
 export default function KitchenPage() {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const fetchOrders = async () => {
-    const { data } = await supabase
-      .from("orders")
-      .select("id, created_at, special_instructions, order_items(id, quantity, status, notes, menu_items(name, prep_time_minutes))")
-      .in("status", ["pending", "in_progress"])
-      .order("created_at", { ascending: true });
-    if (data) setOrders(data as any);
+    try {
+      const data = await api.get<KitchenOrder[]>("/kitchen/orders?status=pending,in_progress");
+      setOrders(data);
+    } finally {
+      setInitialLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchOrders();
-    const channel = supabase.channel("kitchen-orders")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, fetchOrders)
-      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, fetchOrders)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    void fetchOrders();
   }, []);
 
   const updateItemStatus = async (itemId: string, newStatus: string) => {
-    await supabase.from("order_items").update({ status: newStatus }).eq("id", itemId);
-    fetchOrders();
+    await api.patch(`/order-items/${itemId}/status`, { status: newStatus });
+    await fetchOrders();
   };
 
   const statusFlow: Record<string, string> = {
@@ -60,7 +57,30 @@ export default function KitchenPage() {
     <div>
       <PageHeader title="Kitchen Display" description="Real-time order preparation tracking" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {orders.map((order) => (
+        {initialLoading &&
+          Array.from({ length: 3 }).map((_, index) => (
+            <Card key={`kitchen-skeleton-${index}`} className="animate-fade-in">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="h-4 w-16" />
+                </div>
+                <Skeleton className="h-10 w-full" />
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((__, itemIndex) => (
+                    <div key={`kitchen-item-skeleton-${index}-${itemIndex}`} className="flex items-center justify-between gap-2">
+                      <div className="w-full space-y-1">
+                        <Skeleton className="h-4 w-36" />
+                        <Skeleton className="h-3 w-24" />
+                      </div>
+                      <Skeleton className="h-7 w-24 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        {!initialLoading && orders.map((order) => (
           <Card key={order.id} className="animate-fade-in">
             <CardContent className="p-4 space-y-3">
               <div className="flex justify-between items-center">
@@ -79,10 +99,10 @@ export default function KitchenPage() {
               )}
 
               <div className="space-y-2">
-                {order.order_items.map((item) => (
+                {order.items.map((item) => (
                   <div key={item.id} className="flex items-center justify-between text-sm gap-2">
                     <div className="flex-1 min-w-0">
-                      <span className="font-medium">{item.quantity}x {item.menu_items?.name}</span>
+                      <span className="font-medium">{item.quantity}x {item.menu_item?.name}</span>
                       {item.notes && <p className="text-xs text-muted-foreground truncate">{item.notes}</p>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -104,7 +124,7 @@ export default function KitchenPage() {
             </CardContent>
           </Card>
         ))}
-        {orders.length === 0 && (
+        {!initialLoading && orders.length === 0 && (
           <div className="col-span-full text-center py-12 text-muted-foreground">
             No active orders in the kitchen
           </div>
