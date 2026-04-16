@@ -1,6 +1,6 @@
 ## Restaurant Operations Dashboard
 
-A web application for restaurant operations management, built with React + TypeScript + Vite, and powered by Supabase for authentication and database services.
+A web application for restaurant operations management, built with React + TypeScript + Vite, and connected to a backend REST API for authentication and business data.
 
 ## Project Goals
 
@@ -15,15 +15,15 @@ A web application for restaurant operations management, built with React + TypeS
 - Vite 5
 - React Router
 - TanStack Query
-- Supabase (Auth + Postgres)
+- Backend REST API (`/api/v1`)
 - TailwindCSS + shadcn/ui + Radix UI
 - Vitest + Testing Library
 - Playwright
 
 ## Environment Requirements
 
-- Node.js 18+
-- npm 9+
+- Node.js 22.16.0+
+- npm 11.7.0+
 
 ## Installation and Local Development
 
@@ -36,8 +36,7 @@ npm install
 2. Create a `.env` file in the project root:
 
 ```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+VITE_API_BASE_URL=http://localhost:3000/api/v1
 ```
 
 3. Start the development server:
@@ -67,9 +66,8 @@ http://localhost:5173
 - `src/pages`: main screens (Dashboard, Orders, Kitchen, Tables, Reservations, Billing, Inventory, Analytics, Admin)
 - `src/components`: layout and reusable UI components
 - `src/components/ui`: shadcn/ui components
-- `src/contexts/AuthContext.tsx`: authentication session and role management
-- `src/integrations/supabase`: Supabase client and generated types
-- `supabase/migrations`: SQL migrations for database schema
+- `src/contexts/AuthContext.tsx`: authentication session and role management through the backend API
+- `src/lib/api.ts`: shared REST API client for `/api/v1`
 
 ## Role-Based Access Control
 
@@ -84,11 +82,9 @@ The app uses route guards to control feature access by role:
 
 If a user has no assigned roles, the app applies a fallback to allow initial system setup for the first user.
 
-## Database and Migrations
+## Backend Contract
 
-The `supabase/migrations` directory contains SQL migration files.
-
-If you use Supabase CLI, apply migrations according to your local or remote project workflow.
+The frontend expects the backend to expose the routes documented in `API_DESCRIPTION.md` under the base URL configured by `VITE_API_BASE_URL`.
 
 ## Testing
 
@@ -102,7 +98,28 @@ If you use Supabase CLI, apply migrations according to your local or remote proj
 3. Run `npm run lint` and `npm run test` before merging
 4. Verify production build with `npm run build`
 
+## GitHub Pages Deployment
+
+The repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml` that:
+
+- installs dependencies with `npm ci`
+- uses `npm` version `11.7.0`
+- runs `npm run lint`
+- runs `npm run test`
+- runs `npm run build`
+- publishes the `dist` folder to GitHub Pages
+
+### How to enable deployment
+
+1. Push this repository to GitHub.
+2. In GitHub, open `Settings > Pages`.
+3. Set `Source` to `GitHub Actions`.
+4. Add `VITE_API_BASE_URL` as a repository secret if your production API URL is different from local development.
+
+### Workflow trigger
+
+The deploy workflow runs automatically on pushes to the `main` branch and can also be started manually from the `Actions` tab.
+
 ## License
 
 Internal use for learning and project development.
-
