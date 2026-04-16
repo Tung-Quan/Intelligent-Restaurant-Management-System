@@ -22,6 +22,7 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 const LAST_ROUTE_STORAGE_KEY = "irms.last_route";
+const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function PersistRoute() {
   const location = useLocation();
@@ -104,7 +105,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <BrowserRouter basename={ROUTER_BASENAME} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
           <Routes>
             <Route path="/auth" element={<AuthRoute />} />
