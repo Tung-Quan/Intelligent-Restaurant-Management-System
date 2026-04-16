@@ -1,53 +1,33 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 export default function AnalyticsPage() {
   const [ordersByStatus, setOrdersByStatus] = useState<{ name: string; count: number }[]>([]);
   const [topItems, setTopItems] = useState<{ name: string; total: number }[]>([]);
   const [dailyRevenue, setDailyRevenue] = useState<{ date: string; revenue: number }[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
     const fetchAnalytics = async () => {
-      // Orders by status
-      const { data: orders } = await supabase.from("orders").select("status");
-      if (orders) {
-        const counts: Record<string, number> = {};
-        orders.forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
-        setOrdersByStatus(Object.entries(counts).map(([name, count]) => ({ name, count })));
-      }
+      try {
+        const [statusData, topItemData, revenueData] = await Promise.all([
+          api.get<{ name: string; count: number }[]>("/analytics/orders-by-status"),
+          api.get<{ name: string; total: number }[]>("/analytics/top-items?limit=10"),
+          api.get<{ date: string; revenue: number }[]>("/analytics/daily-revenue?days=7"),
+        ]);
 
-      // Top items
-      const { data: items } = await supabase.from("order_items").select("quantity, menu_items(name)");
-      if (items) {
-        const totals: Record<string, number> = {};
-        items.forEach((i: any) => {
-          const name = i.menu_items?.name || "Unknown";
-          totals[name] = (totals[name] || 0) + i.quantity;
-        });
-        setTopItems(
-          Object.entries(totals)
-            .map(([name, total]) => ({ name, total }))
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 10)
-        );
-      }
-
-      // Daily revenue (last 7 days)
-      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-      const { data: paid } = await supabase.from("orders").select("total_amount, created_at").eq("payment_status", "paid").gte("created_at", sevenDaysAgo);
-      if (paid) {
-        const daily: Record<string, number> = {};
-        paid.forEach((o) => {
-          const date = new Date(o.created_at).toLocaleDateString();
-          daily[date] = (daily[date] || 0) + Number(o.total_amount);
-        });
-        setDailyRevenue(Object.entries(daily).map(([date, revenue]) => ({ date, revenue })));
+        setOrdersByStatus(statusData);
+        setTopItems(topItemData);
+        setDailyRevenue(revenueData);
+      } finally {
+        setInitialLoading(false);
       }
     };
-    fetchAnalytics();
+    void fetchAnalytics();
   }, []);
 
   const COLORS = ["hsl(24, 95%, 53%)", "hsl(160, 60%, 40%)", "hsl(210, 80%, 55%)", "hsl(45, 93%, 47%)", "hsl(0, 84%, 60%)", "hsl(220, 30%, 50%)"];
@@ -59,7 +39,9 @@ export default function AnalyticsPage() {
         <Card className="animate-fade-in">
           <CardHeader><CardTitle className="font-heading text-base">Daily Revenue (Last 7 Days)</CardTitle></CardHeader>
           <CardContent>
-            {dailyRevenue.length > 0 ? (
+            {initialLoading ? (
+              <Skeleton className="h-[250px] w-full" />
+            ) : dailyRevenue.length > 0 ? (
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={dailyRevenue}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -76,7 +58,9 @@ export default function AnalyticsPage() {
         <Card className="animate-fade-in">
           <CardHeader><CardTitle className="font-heading text-base">Orders by Status</CardTitle></CardHeader>
           <CardContent>
-            {ordersByStatus.length > 0 ? (
+            {initialLoading ? (
+              <Skeleton className="h-[250px] w-full" />
+            ) : ordersByStatus.length > 0 ? (
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
                   <Pie data={ordersByStatus} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
@@ -92,7 +76,9 @@ export default function AnalyticsPage() {
         <Card className="col-span-full animate-fade-in">
           <CardHeader><CardTitle className="font-heading text-base">Top Menu Items</CardTitle></CardHeader>
           <CardContent>
-            {topItems.length > 0 ? (
+            {initialLoading ? (
+              <Skeleton className="h-[250px] w-full" />
+            ) : topItems.length > 0 ? (
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={topItems} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
