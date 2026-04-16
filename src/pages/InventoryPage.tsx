@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Package, AlertTriangle } from "lucide-react";
 
@@ -21,37 +22,49 @@ interface InventoryItem {
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", unit: "kg", quantity: "0", minThreshold: "10", supplier: "", costPerUnit: "0" });
   const { toast } = useToast();
 
   const fetchItems = async () => {
-    const { data } = await supabase.from("inventory_items").select("*").order("name");
-    if (data) setItems(data as any);
+    try {
+      const data = await api.get<InventoryItem[]>("/inventory/items?sort=name");
+      setItems(data);
+    } finally {
+      setInitialLoading(false);
+    }
   };
 
-  useEffect(() => { fetchItems(); }, []);
+  useEffect(() => { void fetchItems(); }, []);
 
   const addItem = async () => {
     if (!form.name) { toast({ title: "Error", description: "Name required", variant: "destructive" }); return; }
-    const { error } = await supabase.from("inventory_items").insert({
-      name: form.name,
-      unit: form.unit,
-      quantity: parseFloat(form.quantity),
-      min_threshold: parseFloat(form.minThreshold),
-      supplier: form.supplier || null,
-      cost_per_unit: parseFloat(form.costPerUnit),
-    });
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    toast({ title: "Item added!" });
-    setDialogOpen(false);
-    setForm({ name: "", unit: "kg", quantity: "0", minThreshold: "10", supplier: "", costPerUnit: "0" });
-    fetchItems();
+    try {
+      await api.post("/inventory/items", {
+        name: form.name,
+        unit: form.unit,
+        quantity: parseFloat(form.quantity),
+        min_threshold: parseFloat(form.minThreshold),
+        supplier: form.supplier || null,
+        cost_per_unit: parseFloat(form.costPerUnit),
+      });
+      toast({ title: "Item added!" });
+      setDialogOpen(false);
+      setForm({ name: "", unit: "kg", quantity: "0", minThreshold: "10", supplier: "", costPerUnit: "0" });
+      await fetchItems();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to add item",
+        variant: "destructive",
+      });
+    }
   };
 
   const updateQuantity = async (id: string, newQty: number) => {
-    await supabase.from("inventory_items").update({ quantity: newQty }).eq("id", id);
-    fetchItems();
+    await api.patch(`/inventory/items/${id}/quantity`, { quantity: newQty });
+    await fetchItems();
   };
 
   return (
@@ -85,7 +98,28 @@ export default function InventoryPage() {
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {items.map((item) => {
+        {initialLoading &&
+          Array.from({ length: 6 }).map((_, index) => (
+            <Card key={`inventory-skeleton-${index}`} className="animate-fade-in">
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between">
+                  <Skeleton className="h-5 w-32" />
+                  <Skeleton className="h-4 w-4" />
+                </div>
+                <div className="mt-2 space-y-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-4 w-2/3" />
+                </div>
+                <div className="mt-3 flex gap-1">
+                  <Skeleton className="h-9 w-12" />
+                  <Skeleton className="h-9 w-12" />
+                  <Skeleton className="h-9 w-12" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        {!initialLoading && items.map((item) => {
           const isLow = Number(item.quantity) <= Number(item.min_threshold);
           return (
             <Card key={item.id} className="animate-fade-in">
@@ -122,7 +156,7 @@ export default function InventoryPage() {
             </Card>
           );
         })}
-        {items.length === 0 && (
+        {!initialLoading && items.length === 0 && (
           <div className="col-span-full text-center py-12 text-muted-foreground">No inventory items yet</div>
         )}
       </div>
