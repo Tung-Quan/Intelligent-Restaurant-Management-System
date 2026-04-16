@@ -1,13 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { BrowserRouter, Route, Routes, Navigate, useLocation } from "react-router-dom";
+import { useEffect } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import type { AppRole } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
 import AuthPage from "./pages/AuthPage";
 import DashboardPage from "./pages/DashboardPage";
 import OrdersPage from "./pages/OrdersPage";
+import MenuPage from "./pages/MenuPage";
 import KitchenPage from "./pages/KitchenPage";
 import TablesPage from "./pages/TablesPage";
 import ReservationsPage from "./pages/ReservationsPage";
@@ -18,8 +21,20 @@ import AdminPage from "./pages/AdminPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+const LAST_ROUTE_STORAGE_KEY = "irms.last_route";
 
-type AppRole = "admin" | "manager" | "server" | "chef" | "cashier" | "host";
+function PersistRoute() {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.pathname !== "/auth") {
+      const nextPath = `${location.pathname}${location.search}${location.hash}`;
+      sessionStorage.setItem(LAST_ROUTE_STORAGE_KEY, nextPath);
+    }
+  }, [location]);
+
+  return null;
+}
 
 function RoleGuard({ roles, children }: { roles: AppRole[]; children: React.ReactNode }) {
   const { roles: userRoles, hasRole, loading } = useAuth();
@@ -32,6 +47,7 @@ function RoleGuard({ roles, children }: { roles: AppRole[]; children: React.Reac
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -41,12 +57,18 @@ function ProtectedRoutes() {
     );
   }
 
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user) {
+    const nextPath = `${location.pathname}${location.search}${location.hash}`;
+    sessionStorage.setItem(LAST_ROUTE_STORAGE_KEY, nextPath);
+    return <Navigate to="/auth" replace state={{ from: location }} />;
+  }
 
   return (
     <AppLayout>
+      <PersistRoute />
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/menu" element={<MenuPage />} />
         <Route path="/orders" element={<RoleGuard roles={["admin", "manager", "server", "cashier"]}><OrdersPage /></RoleGuard>} />
         <Route path="/kitchen" element={<RoleGuard roles={["admin", "manager", "chef"]}><KitchenPage /></RoleGuard>} />
         <Route path="/tables" element={<RoleGuard roles={["admin", "manager", "server", "host"]}><TablesPage /></RoleGuard>} />
@@ -62,9 +84,18 @@ function ProtectedRoutes() {
 }
 
 function AuthRoute() {
+  const location = useLocation();
   const { user, loading } = useAuth();
+
+  const rememberedPath = sessionStorage.getItem(LAST_ROUTE_STORAGE_KEY);
+  const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
+  const nextPathFromState = state?.from
+    ? `${state.from.pathname || "/"}${state.from.search || ""}${state.from.hash || ""}`
+    : null;
+  const nextPath = nextPathFromState || rememberedPath || "/";
+
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={nextPath} replace />;
   return <AuthPage />;
 }
 
@@ -73,7 +104,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
           <Routes>
             <Route path="/auth" element={<AuthRoute />} />

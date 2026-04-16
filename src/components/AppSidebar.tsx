@@ -1,7 +1,7 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, UtensilsCrossed, ChefHat, Armchair,
-  CalendarDays, Receipt, Package, BarChart3, Settings, LogOut
+  CalendarDays, Receipt, Package, BarChart3, Settings, LogOut, BookOpen
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/menu", icon: BookOpen, label: "Menu" },
   { to: "/orders", icon: UtensilsCrossed, label: "Orders", roles: ["admin", "manager", "server", "cashier"] },
   { to: "/kitchen", icon: ChefHat, label: "Kitchen (KDS)", roles: ["admin", "manager", "chef"] },
   { to: "/tables", icon: Armchair, label: "Tables", roles: ["admin", "manager", "server", "host"] },
@@ -29,7 +30,6 @@ const navItems: NavItem[] = [
 
 export function AppSidebar() {
   const { user, roles, signOut, hasRole } = useAuth();
-  const location = useLocation();
 
   const visibleItems = navItems.filter((item) => {
     if (!item.roles) return true;
@@ -45,8 +45,8 @@ export function AppSidebar() {
           <UtensilsCrossed className="h-5 w-5 text-sidebar-primary-foreground" />
         </div>
         <div>
-          <h1 className="font-heading text-base font-bold text-sidebar-accent-foreground">IRMS</h1>
-          <p className="text-xs text-sidebar-foreground/60">Restaurant Management</p>
+          <h1 className="font-brand text-base font-bold text-sidebar-accent-foreground">IRMS</h1>
+          <p className="font-heading text-xs text-sidebar-foreground/60">Restaurant Management</p>
         </div>
       </div>
 
@@ -58,7 +58,7 @@ export function AppSidebar() {
             end={item.to === "/"}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
+                "font-heading flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
                 isActive
                   ? "bg-sidebar-primary text-sidebar-primary-foreground"
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -77,9 +77,9 @@ export function AppSidebar() {
             {user?.email?.charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-sidebar-accent-foreground truncate">{user?.email}</p>
+            <p className="font-heading text-xs font-medium text-sidebar-accent-foreground truncate">{user?.email}</p>
             {roles.length > 0 && (
-              <p className="text-[10px] text-sidebar-foreground/50 truncate">
+              <p className="font-heading text-[10px] text-sidebar-foreground/50 truncate">
                 {roles.join(", ")}
               </p>
             )}
@@ -87,7 +87,7 @@ export function AppSidebar() {
         </div>
         <button
           onClick={signOut}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-all"
+          className="font-heading flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-all"
         >
           <LogOut className="h-4 w-4" />
           Sign Out
