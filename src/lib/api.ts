@@ -48,6 +48,10 @@ export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
+export function getApiBaseUrl() {
+  return API_BASE_URL;
+}
+
 export function setAuthTokens(accessToken: string, refreshToken?: string | null) {
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
   if (refreshToken) {
