@@ -25,14 +25,21 @@ interface Table {
   table_number: number;
 }
 
+interface TableApi {
+  id: string;
+  table_number?: number | string | null;
+  tableNumber?: number | string | null;
+}
+
 interface OrderSummary {
   id: string;
   status: string;
   total_amount: number;
   table_id: string | null;
   table?: {
-    table_number: number;
-  };
+    table_number?: number | string | null;
+    tableNumber?: number | string | null;
+  } | null;
   items: {
     id: string;
     menu_item_name: string;
@@ -63,13 +70,18 @@ export default function OrdersPage() {
     try {
       const [menuRes, tableRes, orderRes] = await Promise.all([
         api.get<MenuItem[]>("/menu-items?is_available=true"),
-        api.get<Table[]>("/tables?sort=table_number"),
+        api.get<TableApi[]>("/tables?sort=table_number"),
         // Added 'table' to the include parameter so we can see which table ordered
         api.get<OrderSummary[]>("/orders?include=items,items.menu_item,table&limit=20&sort=-created_at"),
       ]);
 
+      const normalizedTables = tableRes.map((table) => ({
+        id: table.id,
+        table_number: Number(table.table_number ?? table.tableNumber ?? 0),
+      }));
+
       setMenuItems(menuRes);
-      setTables(tableRes);
+      setTables(normalizedTables);
       setOrders(orderRes);
     } finally {
       setInitialLoading(false);
@@ -97,6 +109,16 @@ export default function OrdersPage() {
   };
 
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  const getOrderTableNumber = (order: OrderSummary) => {
+    const nestedTableNumber = order.table?.table_number ?? order.table?.tableNumber;
+    if (nestedTableNumber !== undefined && nestedTableNumber !== null) {
+      return Number(nestedTableNumber);
+    }
+
+    const matchingTable = tables.find((table) => table.id === order.table_id);
+    return matchingTable?.table_number ?? null;
+  };
 
   const submitOrder = async () => {
     if (!selectedTable || cart.length === 0) {
@@ -263,53 +285,56 @@ export default function OrdersPage() {
             </Card>
           ))}
           
-        {!initialLoading && orders.map((order) => (
-          <Card key={order.id} className="animate-fade-in">
-            <CardContent className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-4">
-                <div>
-                  <p className="font-medium text-sm flex items-center gap-2">
-                    Order #{order.id.slice(0, 8)}
-                    {/* Display Table Number */}
-                    {order.table && (
-                      <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-bold">
-                        Table {order.table.table_number}
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {order.items?.map((i) => `${i.menu_item_name} x${i.quantity}`).join(", ") || "No items"}
-                  </p>
+        {!initialLoading && orders.map((order) => {
+          const tableNumber = getOrderTableNumber(order);
+
+          return (
+            <Card key={order.id} className="animate-fade-in">
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <p className="font-medium text-sm flex items-center gap-2">
+                      Order #{order.id.slice(0, 8)}
+                      {tableNumber !== null && (
+                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-bold">
+                          Table {tableNumber}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {order.items?.map((i) => `${i.menu_item_name} x${i.quantity}`).join(", ") || "No items"}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="font-heading font-bold">${Number(order.total_amount).toFixed(2)}</span>
-                <StatusBadge status={order.status} />
-                
-                {order.status !== "completed" && order.status !== "cancelled" && order.status !== "ready" && (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => handleSendToBilling(order.id)}
-                  >
-                    <Receipt className="h-4 w-4 mr-2" />
-                    Ready
-                  </Button>
-                )}
-                {order.status !== "completed" && order.status !== "cancelled" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCancelOrder(order.id, order.table_id)}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Cancel
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                <div className="flex items-center gap-4">
+                  <span className="font-heading font-bold">${Number(order.total_amount).toFixed(2)}</span>
+                  <StatusBadge status={order.status} />
+                  
+                  {order.status !== "completed" && order.status !== "cancelled" && order.status !== "ready" && (
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleSendToBilling(order.id)}
+                    >
+                      <Receipt className="h-4 w-4 mr-2" />
+                      Ready
+                    </Button>
+                  )}
+                  {order.status !== "completed" && order.status !== "cancelled" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCancelOrder(order.id, order.table_id)}
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
         
         {!initialLoading && orders.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">No orders yet. Create your first order!</div>

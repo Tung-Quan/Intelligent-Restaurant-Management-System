@@ -72,7 +72,7 @@ function ProtectedRoutes() {
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/orders" element={<RoleGuard roles={["admin", "manager", "server", "cashier"]}><OrdersPage /></RoleGuard>} />
         <Route path="/kitchen" element={<RoleGuard roles={["admin", "manager", "chef"]}><KitchenPage /></RoleGuard>} />
-        <Route path="/tables" element={<RoleGuard roles={["admin", "manager", "server"]}><TablesPage /></RoleGuard>} />
+        <Route path="/tables" element={<RoleGuard roles={["admin", "manager", "server", "host"]}><TablesPage /></RoleGuard>} />
         <Route path="/reservations" element={<RoleGuard roles={["admin", "manager", "server", "host"]}><ReservationsPage /></RoleGuard>} />
         <Route path="/billing" element={<RoleGuard roles={["admin", "manager", "cashier"]}><BillingPage /></RoleGuard>} />
         <Route path="/inventory" element={<RoleGuard roles={["admin", "manager"]}><InventoryPage /></RoleGuard>} />
