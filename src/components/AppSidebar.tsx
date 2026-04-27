@@ -20,7 +20,7 @@ const navItems: NavItem[] = [
   { to: "/menu", icon: BookOpen, label: "Menu" },
   { to: "/orders", icon: UtensilsCrossed, label: "Orders", roles: ["admin", "manager", "server", "cashier"] },
   { to: "/kitchen", icon: ChefHat, label: "Kitchen (KDS)", roles: ["admin", "manager", "chef"] },
-  { to: "/tables", icon: Armchair, label: "Tables", roles: ["admin", "manager", "server", "host"] },
+  { to: "/tables", icon: Armchair, label: "Tables", roles: ["admin", "manager", "server"] },
   { to: "/reservations", icon: CalendarDays, label: "Reservations", roles: ["admin", "manager", "server", "host"] },
   { to: "/billing", icon: Receipt, label: "Billing", roles: ["admin", "manager", "cashier"] },
   { to: "/inventory", icon: Package, label: "Inventory", roles: ["admin", "manager"] },
