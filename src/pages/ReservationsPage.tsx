@@ -1,48 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import {
-  getHostBoardCounts,
-  getMinutesUntilReservation,
-  getReservationUrgency,
-  sortReservationsForHost,
-} from "@/lib/reservations";
-import { PageHeader } from "@/components/PageHeader";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  Plus,
-  CalendarDays,
-  Phone,
-  Users,
-  Armchair,
-  CheckCircle2,
-  Clock3,
-  RefreshCcw,
-  Sparkles,
+import { useToast } from "@/hooks/use-toast";
+import { 
+  Users, Sparkles, Clock, CheckCircle, 
+  Search, Calendar, Phone, TableProperties, Edit3, ArrowRight
 } from "lucide-react";
 
-const HOST_ASSIGNMENTS_STORAGE_KEY = "irms.host-table-assignments";
-const HOST_REFRESH_INTERVAL_MS = 30_000;
-
+// --- Types ---
 interface Reservation {
   id: string;
   customer_name: string;
-  customer_phone: string | null;
+  customer_phone?: string;
   party_size: number;
   reservation_time: string;
   status: string;
-  notes: string | null;
-  table: { id: string; table_number: number } | null;
+  notes?: string;
+  table: { id: string; table_number: number; status?: string } | null;
 }
 
 interface RestaurantTable {
@@ -50,721 +31,642 @@ interface RestaurantTable {
   table_number: number;
   capacity: number;
   status: string;
-  location_zone: string | null;
 }
 
-const RESERVATION_STATUSES = ["pending", "confirmed", "seated", "completed", "cancelled", "no_show"];
+type RestaurantTableApi = {
+  id: string;
+  status: string;
+  table_number?: number | string | null;
+  tableNumber?: number | string | null;
+  capacity?: number | string | null;
+};
 
-type TableAssignmentMap = Record<string, RestaurantTable>;
-
-function loadStoredAssignments() {
-  try {
-    const raw = localStorage.getItem(HOST_ASSIGNMENTS_STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as TableAssignmentMap;
-  } catch {
-    return {};
-  }
-}
-
-function formatTimingLabel(reservationTime: string) {
-  const minutesUntil = getMinutesUntilReservation(reservationTime);
-
-  if (minutesUntil < -15) return `${Math.abs(minutesUntil)} min overdue`;
-  if (minutesUntil < 0) return "Arriving now";
-  if (minutesUntil <= 60) return `In ${minutesUntil} min`;
-  if (minutesUntil < 24 * 60) return `In ${Math.round(minutesUntil / 60)} hr`;
-  return new Date(reservationTime).toLocaleString();
-}
-
-function urgencyBadgeClassName(urgency: ReturnType<typeof getReservationUrgency>) {
-  switch (urgency) {
-    case "late":
-      return "border-destructive/40 bg-destructive/10 text-destructive";
-    case "imminent":
-      return "border-warning/40 bg-warning/10 text-warning";
-    case "soon":
-      return "border-info/40 bg-info/10 text-info";
-    case "upcoming":
-      return "border-primary/40 bg-primary/10 text-primary";
-    default:
-      return "border-border bg-muted text-muted-foreground";
-  }
-}
+const RESERVATION_STATUSES = ["all", "pending", "confirmed", "seated", "completed", "cancelled"] as const;
+const REFRESH_INTERVAL_MS = 30_000;
 
 export default function ReservationsPage() {
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [tables, setTables] = useState<RestaurantTable[]>([]);
-  const [assignedTables, setAssignedTables] = useState<TableAssignmentMap>(() => loadStoredAssignments());
-  const [selectedTables, setSelectedTables] = useState<Record<string, string>>({});
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [serviceFilter, setServiceFilter] = useState<"host_board" | "today" | "upcoming" | "history">("today");
-  const [busyReservationId, setBusyReservationId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [form, setForm] = useState({ name: "", phone: "", partySize: "2", date: "", time: "", notes: "" });
-  const { toast } = useToast();
   const { hasRole } = useAuth();
+  const isAdmin = hasRole("admin") || hasRole("manager");
 
-  const isHost = hasRole("host") && !hasRole("admin") && !hasRole("manager");
+  // Nếu là Admin, render Dashboard. Nếu không (Host), render Form đăng ký.
+  if (!isAdmin) {
+    return <HostBookingForm />;
+  }
 
-  useEffect(() => {
-    localStorage.setItem(HOST_ASSIGNMENTS_STORAGE_KEY, JSON.stringify(assignedTables));
-  }, [assignedTables]);
+  return <AdminReservationsDashboard />;
+}
 
-  const fetchReservations = useCallback(async () => {
-    const data = await api.get<Reservation[]>("/reservations?sort=reservation_time");
-    setReservations(data);
-  }, []);
+// ==========================================
+// 1. GIAO DIỆN HOST: CHỈ HIỂN THỊ FORM ĐẶT BÀN
+// ==========================================
+function HostBookingForm() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [myReservations, setMyReservations] = useState<Reservation[]>([]);
+  const lastSuccessfulPayloadKeyRef = useRef<string | null>(null);
+  const [date, setDate] = useState("");
+  const [name, setName] = useState("");
+  const [guests, setGuests] = useState("");
+  const [time, setTime] = useState("");
+  const [description, setDescription] = useState("");
 
-  const fetchTables = useCallback(async () => {
-    const data = await api.get<RestaurantTable[]>("/tables?sort=table_number");
-    setTables(data);
-  }, []);
+  const fetchMyReservations = useCallback(async () => {
+    if (!user) {
+      setMyReservations([]);
+      setIsHistoryLoading(false);
+      return;
+    }
 
-  const refreshData = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
-    if (!silent) setRefreshing(true);
-
+    setIsHistoryLoading(true);
     try {
-      await Promise.all([fetchReservations(), fetchTables()]);
-    } catch (error) {
-      toast({
-        title: "Unable to refresh reservations",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      if (!silent) setRefreshing(false);
-      setInitialLoading(false);
-    }
-  }, [fetchReservations, fetchTables, toast]);
+      const data = await api.get<Reservation[]>("/reservations?sort=reservation_time");
+      const emailNeedle = user.email.toLowerCase();
+      const nameNeedle = user.display_name.trim().toLowerCase();
 
-  useEffect(() => {
-    refreshData();
-  }, [refreshData]);
-
-  useEffect(() => {
-    if (!isHost) return;
-
-    const interval = window.setInterval(() => {
-      refreshData({ silent: true });
-    }, HOST_REFRESH_INTERVAL_MS);
-
-    return () => window.clearInterval(interval);
-  }, [isHost, refreshData]);
-
-  useEffect(() => {
-    if (isHost) {
-      setServiceFilter((current) => (current === "today" ? "host_board" : current));
-    }
-  }, [isHost]);
-
-  useEffect(() => {
-    setAssignedTables((current) => {
-      const next = { ...current };
-
-      reservations.forEach((reservation) => {
-        if (reservation.table) {
-          const matchingTable = tables.find((table) => table.id === reservation.table?.id);
-          next[reservation.id] =
-            matchingTable ||
-            next[reservation.id] || {
-              id: reservation.table.id,
-              table_number: reservation.table.table_number,
-              capacity: reservation.party_size,
-              status: reservation.status === "seated" ? "occupied" : "reserved",
-              location_zone: null,
-            };
-        }
-
-        if (["completed", "cancelled", "no_show"].includes(reservation.status)) {
-          delete next[reservation.id];
-        }
-      });
-
-      Object.keys(next).forEach((reservationId) => {
-        if (!reservations.some((reservation) => reservation.id === reservationId)) {
-          delete next[reservationId];
-        }
-      });
-
-      return next;
-    });
-  }, [reservations, tables]);
-
-  const setAssignedTable = useCallback((reservationId: string, table: RestaurantTable | null) => {
-    setAssignedTables((current) => {
-      const next = { ...current };
-
-      if (table) {
-        next[reservationId] = table;
-      } else {
-        delete next[reservationId];
-      }
-
-      return next;
-    });
-  }, []);
-
-  const getEffectiveTable = useCallback(
-    (reservation: Reservation) => {
-      if (reservation.table) {
-        return (
-          tables.find((table) => table.id === reservation.table?.id) ||
-          assignedTables[reservation.id] || {
-            id: reservation.table.id,
-            table_number: reservation.table.table_number,
-            capacity: reservation.party_size,
-            status: reservation.status === "seated" ? "occupied" : "reserved",
-            location_zone: null,
-          }
-        );
-      }
-
-      return assignedTables[reservation.id] || null;
-    },
-    [assignedTables, tables]
-  );
-
-  const getEligibleTables = useCallback(
-    (reservation: Reservation) => {
-      const effectiveTable = getEffectiveTable(reservation);
-      const selectedTableId = selectedTables[reservation.id];
-
-      return tables
-        .filter((table) => {
-          if (table.capacity < reservation.party_size) return false;
-          if (effectiveTable?.id === table.id) return true;
-          if (selectedTableId === table.id) return true;
-          return table.status === "available";
+      const ownedReservations = data
+        .filter((reservation) => {
+          const notes = (reservation.notes || "").toLowerCase();
+          const customerName = reservation.customer_name.toLowerCase();
+          return notes.includes(emailNeedle) || customerName === nameNeedle;
         })
-        .sort((left, right) => {
-          const capacityDiff = left.capacity - right.capacity;
-          if (capacityDiff !== 0) return capacityDiff;
-          return left.table_number - right.table_number;
-        });
-    },
-    [getEffectiveTable, selectedTables, tables]
-  );
+        .sort(
+          (left, right) =>
+            new Date(right.reservation_time).getTime() - new Date(left.reservation_time).getTime()
+        );
 
-  const resolveTableForReservation = useCallback(
-    (reservation: Reservation) => {
-      const selectedTableId = selectedTables[reservation.id];
-      const effectiveTable = getEffectiveTable(reservation);
-      const eligibleTables = getEligibleTables(reservation);
-
-      if (selectedTableId) {
-        const selected = eligibleTables.find((table) => table.id === selectedTableId);
-        if (selected) return selected;
-      }
-
-      if (effectiveTable) return effectiveTable;
-
-      return eligibleTables[0] || null;
-    },
-    [getEffectiveTable, getEligibleTables, selectedTables]
-  );
-
-  const createReservation = async () => {
-    if (!form.name || !form.date || !form.time) {
-      toast({ title: "Error", description: "Fill required fields", variant: "destructive" });
-      return;
-    }
-    try {
-      await api.post("/reservations", {
-        customer_name: form.name,
-        customer_phone: form.phone || null,
-        party_size: parseInt(form.partySize, 10),
-        reservation_time: `${form.date}T${form.time}:00`,
-        notes: form.notes || null,
-      });
-      toast({ title: "Reservation created" });
-      setDialogOpen(false);
-      setForm({ name: "", phone: "", partySize: "2", date: "", time: "", notes: "" });
-      await refreshData({ silent: true });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create reservation",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const updateStatus = async (id: string, status: string) => {
-    const reservation = reservations.find((item) => item.id === id);
-    const effectiveTable = reservation ? getEffectiveTable(reservation) : null;
-
-    setBusyReservationId(id);
-    try {
-      if (effectiveTable && ["completed", "cancelled", "no_show"].includes(status)) {
-        await api.patch(`/tables/${effectiveTable.id}/status`, { status: "available" });
-        setAssignedTable(id, null);
-      }
-
-      await api.patch(`/reservations/${id}/status`, { status });
-      await refreshData({ silent: true });
-    } catch (error) {
-      toast({
-        title: "Unable to update reservation",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
+      setMyReservations(ownedReservations);
     } finally {
-      setBusyReservationId(null);
+      setIsHistoryLoading(false);
     }
-  };
+  }, [user]);
 
-  const reserveSuggestedTable = async (reservation: Reservation) => {
-    const nextTable = resolveTableForReservation(reservation);
-    if (!nextTable) {
+  useEffect(() => {
+    void fetchMyReservations();
+  }, [fetchMyReservations]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    const trimmedName = name.trim();
+    const partySize = Number(guests);
+
+    if (!date || !time || !trimmedName || !Number.isInteger(partySize) || partySize < 1) {
       toast({
-        title: "No table available",
-        description: "All matching tables are occupied or too small right now.",
+        title: "Invalid reservation form",
+        description: "Please enter valid date, time, name, and guests (minimum 1).",
         variant: "destructive",
       });
       return;
     }
 
-    setBusyReservationId(reservation.id);
-    try {
-      await api.patch(`/tables/${nextTable.id}/status`, { status: "reserved" });
-      await api.patch(`/reservations/${reservation.id}/status`, { status: "confirmed" });
-      setAssignedTable(reservation.id, nextTable);
+    const reservationDate = new Date(`${date}T${time}:00`);
+    if (Number.isNaN(reservationDate.getTime())) {
       toast({
-        title: `Held table #${nextTable.table_number}`,
-        description: `${reservation.customer_name} is now confirmed.`,
-      });
-      await refreshData({ silent: true });
-    } catch (error) {
-      toast({
-        title: "Unable to hold a table",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyReservationId(null);
-    }
-  };
-
-  const seatReservation = async (reservation: Reservation) => {
-    const nextTable = resolveTableForReservation(reservation);
-
-    if (!nextTable) {
-      toast({
-        title: "No table ready",
-        description: "Reserve or free up a suitable table before seating this party.",
+        title: "Invalid date/time",
+        description: "Please choose a valid reservation date and time.",
         variant: "destructive",
       });
       return;
     }
 
-    setBusyReservationId(reservation.id);
-    try {
-      await api.patch(`/tables/${nextTable.id}/status`, { status: "occupied" });
-      await api.patch(`/reservations/${reservation.id}/status`, { status: "seated" });
-      setAssignedTable(reservation.id, nextTable);
+    const noteParts: string[] = [];
+    if (user?.email) noteParts.push(`Email: ${user.email}`);
+    if (description.trim()) noteParts.push(description.trim());
+
+    const payload = {
+      customer_name: trimmedName,
+      party_size: partySize,
+      reservation_time: reservationDate.toISOString(),
+      notes: noteParts.length ? noteParts.join("\n") : undefined,
+    };
+    const payloadKey = JSON.stringify(payload);
+    if (lastSuccessfulPayloadKeyRef.current === payloadKey) {
       toast({
-        title: `${reservation.customer_name} seated`,
-        description: `Moved to table #${nextTable.table_number}.`,
+        title: "Already submitted",
+        description: "This reservation request was already sent.",
       });
-      await refreshData({ silent: true });
-    } catch (error) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await api.post<{ id: string; status: string }>("/reservations", payload);
+      lastSuccessfulPayloadKeyRef.current = payloadKey;
+      await fetchMyReservations();
+
       toast({
-        title: "Unable to seat guests",
-        description: error instanceof Error ? error.message : "Please try again.",
+        title: "Reservation created",
+        description: "Your booking request has been sent to admin.",
+      });
+
+      setDate("");
+      setName("");
+      setGuests("");
+      setTime("");
+      setDescription("");
+    } catch (err) {
+      toast({
+        title: "Failed to create reservation",
+        description: err instanceof Error ? err.message : "Please try again.",
         variant: "destructive",
       });
     } finally {
-      setBusyReservationId(null);
+      setIsSubmitting(false);
     }
   };
-
-  const releaseTableForReservation = async (reservation: Reservation) => {
-    const effectiveTable = getEffectiveTable(reservation);
-    if (!effectiveTable?.id) return;
-
-    setBusyReservationId(reservation.id);
-    try {
-      await api.patch(`/tables/${effectiveTable.id}/status`, { status: "available" });
-      await api.patch(`/reservations/${reservation.id}/status`, { status: "completed" });
-      setAssignedTable(reservation.id, null);
-      toast({
-        title: `${reservation.customer_name} completed`,
-        description: `Table #${effectiveTable.table_number} is available again.`,
-      });
-      await refreshData({ silent: true });
-    } catch (error) {
-      toast({
-        title: "Unable to complete seating",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyReservationId(null);
-    }
-  };
-
-  const reservationCounts = useMemo(() => getHostBoardCounts(reservations), [reservations]);
-
-  const availableTables = useMemo(
-    () => tables.filter((table) => table.status === "available").sort((left, right) => left.table_number - right.table_number),
-    [tables]
-  );
-
-  const filteredReservations = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const now = new Date();
-
-    const nextReservations = reservations.filter((reservation) => {
-      const reservationDate = new Date(reservation.reservation_time);
-      const sameDay = reservationDate.toDateString() === now.toDateString();
-      const inFuture = reservationDate >= now;
-      const urgency = getReservationUrgency(reservation, now);
-      const matchesService =
-        serviceFilter === "host_board"
-          ? urgency !== "history" && ["pending", "confirmed", "seated"].includes(reservation.status)
-          : serviceFilter === "today"
-            ? sameDay
-            : serviceFilter === "upcoming"
-              ? inFuture && !sameDay
-              : reservationDate < now || ["completed", "cancelled", "no_show"].includes(reservation.status);
-
-      const matchesStatus = statusFilter === "all" || reservation.status === statusFilter;
-      const matchesSearch =
-        !query ||
-        reservation.customer_name.toLowerCase().includes(query) ||
-        reservation.customer_phone?.toLowerCase().includes(query);
-
-      return matchesService && matchesStatus && matchesSearch;
-    });
-
-    return isHost ? sortReservationsForHost(nextReservations, now) : nextReservations;
-  }, [isHost, reservations, search, serviceFilter, statusFilter]);
 
   return (
-    <div>
-      <PageHeader
-        title="Reservations"
-        description={
-          isHost
-            ? "Host view: create new reservations and review guest arrivals. Reservation changes must be handled by restaurant staff."
-            : "Manage bookings, guest arrivals, and table coordination"
-        }
-        actions={
-          <>
-            <Button variant="outline" onClick={() => refreshData()} disabled={refreshing}>
-              <RefreshCcw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  New Reservation
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle className="font-heading">New Reservation</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3">
-                  <Input
-                    placeholder="Customer name *"
-                    value={form.name}
-                    onChange={(event) => setForm({ ...form, name: event.target.value })}
-                  />
-                  <Input
-                    placeholder="Phone"
-                    value={form.phone}
-                    onChange={(event) => setForm({ ...form, phone: event.target.value })}
-                  />
-                  <Input
-                    type="number"
-                    placeholder="Party size"
-                    value={form.partySize}
-                    onChange={(event) => setForm({ ...form, partySize: event.target.value })}
-                    min={1}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
-                    <Input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} />
-                  </div>
-                  <Textarea
-                    placeholder="Notes"
-                    value={form.notes}
-                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                  />
-                  <Button onClick={createReservation} className="w-full">
-                    Create Reservation
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </>
-        }
-      />
-
-      <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-warning/10 p-3 text-warning">
-              <Clock3 className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Arriving soon</p>
-              {initialLoading ? <Skeleton className="mt-2 h-8 w-16" /> : <p className="font-heading text-2xl font-bold">{reservationCounts.arrivingSoon}</p>}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-info/10 p-3 text-info">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Need table hold</p>
-              {initialLoading ? <Skeleton className="mt-2 h-8 w-16" /> : <p className="font-heading text-2xl font-bold">{reservationCounts.needHold}</p>}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-primary/10 p-3 text-primary">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Ready to seat</p>
-              {initialLoading ? <Skeleton className="mt-2 h-8 w-16" /> : <p className="font-heading text-2xl font-bold">{reservationCounts.readyToSeat}</p>}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-success/10 p-3 text-success">
-              <Armchair className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Open tables now</p>
-              {initialLoading ? <Skeleton className="mt-2 h-8 w-16" /> : <p className="font-heading text-2xl font-bold">{availableTables.length}</p>}
-            </div>
-          </CardContent>
-        </Card>
+    <div className="max-w-4xl mx-auto py-12 px-4 space-y-8 relative">
+      {/* Background Decor (Tùy chọn mô phỏng thiết kế) */}
+      <div className="text-center space-y-4 mb-10">
+        <h1 className="text-3xl font-black uppercase tracking-wider">Table Reservation</h1>
+        <p className="text-muted-foreground text-sm max-w-2xl mx-auto">
+          Please fill out the form below to request a reservation. Our admin team will review your request and assign a table for you shortly.
+        </p>
       </div>
 
-      {isHost && (
-        <Card className="mb-4 border-dashed border-border">
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            Hosts can create new reservations and check table availability only. To change reservation status, assigned table, or guest seating, send the details to restaurant staff so they can update the internal system.
-          </CardContent>
-        </Card>
-      )}
+      <form className="space-y-6" onSubmit={handleSubmit}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Date */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold ml-1">Date</label>
+            <Input
+              type="date"
+              className="bg-muted/30 border-0 h-12"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              required
+            />
+          </div>
 
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row">
-        <Input
-          className="lg:max-w-sm"
-          placeholder="Search guest or phone"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full lg:w-[180px]">
-            <SelectValue placeholder="Filter status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {RESERVATION_STATUSES.map((status) => (
-              <SelectItem key={status} value={status} className="capitalize">
-                {status.replace(/_/g, " ")}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Tabs value={serviceFilter} onValueChange={(value) => setServiceFilter(value as "host_board" | "today" | "upcoming" | "history")}>
-          <TabsList>
-            {isHost && <TabsTrigger value="host_board">Host board</TabsTrigger>}
-            <TabsTrigger value="today">Today</TabsTrigger>
-            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+          {/* Your Name */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold ml-1">Your Name</label>
+            <div className="relative">
+              <Input
+                placeholder="Full name"
+                className="bg-muted/30 border-0 h-12 pr-10"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                required
+              />
+              <Edit3 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            </div>
+          </div>
 
-      <div className="space-y-3">
-        {initialLoading && (
-          <>
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Card key={`reservation-skeleton-${index}`} className="animate-fade-in">
-                <CardContent className="space-y-4 p-4">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="flex-1 space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Skeleton className="h-8 w-48" />
-                        <Skeleton className="h-7 w-24 rounded-full" />
-                        <Skeleton className="h-7 w-20 rounded-full" />
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Skeleton className="h-4 w-44" />
-                        <Skeleton className="h-4 w-24" />
-                        <Skeleton className="h-4 w-36" />
-                      </div>
-                      <Skeleton className="h-7 w-56 rounded-full" />
-                      <Skeleton className="h-4 w-72" />
-                    </div>
-                    <div className="flex w-full max-w-sm flex-wrap items-center gap-2 xl:justify-end">
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </>
-        )}
+          {/* Guests */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold ml-1">Guests</label>
+            <div className="relative">
+              <Input
+                type="number"
+                placeholder="Number of guests"
+                className="bg-muted/30 border-0 h-12 pr-10"
+                min={1}
+                step={1}
+                value={guests}
+                onChange={(e) => setGuests(e.target.value)}
+                required
+              />
+              <Users className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            </div>
+          </div>
 
-        {filteredReservations.map((reservation) => {
-          const urgency = getReservationUrgency(reservation);
-          const effectiveTable = getEffectiveTable(reservation);
-          const eligibleTables = getEligibleTables(reservation);
-          const suggestedTables = eligibleTables.slice(0, 3);
-          const nextAction = isHost
-            ? "Send updates to restaurant staff"
-            : reservation.status === "pending"
-              ? "Hold table"
-              : reservation.status === "confirmed"
-                ? "Seat guest"
-                : reservation.status === "seated"
-                  ? "Complete service"
-                  : "Monitor";
-          const isBusy = busyReservationId === reservation.id;
+          {/* In Time */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold ml-1">In Time</label>
+            <div className="relative">
+              <Input
+                type="time"
+                className="bg-muted/30 border-0 h-12 pr-10"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                required
+              />
+              <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            </div>
+          </div>
+        </div>
 
-          return (
-            <Card key={reservation.id} className="animate-fade-in">
-              <CardContent className="space-y-4 p-4">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{reservation.customer_name}</p>
-                      <StatusBadge status={reservation.status} />
-                      <Badge variant="outline" className={urgencyBadgeClassName(urgency)}>
-                        {formatTimingLabel(reservation.reservation_time)}
-                      </Badge>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <CalendarDays className="h-3 w-3" />
-                        {new Date(reservation.reservation_time).toLocaleString()}
+        {/* Description */}
+        <div className="space-y-2">
+          <label className="text-sm font-semibold ml-1">Description</label>
+          <div className="relative">
+            <Textarea 
+              placeholder="Type here..." 
+              className="bg-muted/30 border-0 min-h-[120px] resize-none pb-8"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={1000}
+            />
+            <span className="absolute bottom-2 right-3 text-xs text-muted-foreground">{description.length}/1000</span>
+          </div>
+        </div>
+
+        <div className="flex justify-center pt-4">
+          <Button
+            type="submit"
+            disabled={isSubmitting}
+            className="bg-[#2D2D2D] hover:bg-black text-white rounded-full px-8 py-6 uppercase font-bold tracking-wider"
+          >
+            {isSubmitting ? "Sending..." : "Book a table"} <ArrowRight className="ml-2 w-4 h-4" />
+          </Button>
+        </div>
+      </form>
+
+      <div className="pt-4 space-y-3">
+        <h2 className="text-lg font-bold tracking-tight">My reservation history</h2>
+        {isHistoryLoading ? (
+          <Card className="shadow-none border-muted">
+            <CardContent className="p-4">
+              <Skeleton className="h-16 w-full" />
+            </CardContent>
+          </Card>
+        ) : myReservations.length === 0 ? (
+          <div className="text-sm text-muted-foreground border border-dashed rounded-lg p-4 bg-muted/10">
+            You do not have any reservations yet.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {myReservations.map((reservation) => {
+              const reservationDate = new Date(reservation.reservation_time);
+              let statusClass = "bg-gray-100 text-gray-700";
+              if (reservation.status === "confirmed") statusClass = "bg-blue-50 text-blue-600";
+              if (reservation.status === "seated") statusClass = "bg-green-50 text-green-600";
+              if (reservation.status === "completed") statusClass = "bg-emerald-50 text-emerald-600";
+              if (reservation.status === "cancelled") statusClass = "bg-red-50 text-red-600";
+              if (reservation.status === "pending") statusClass = "bg-yellow-50 text-yellow-700";
+
+              return (
+                <Card key={reservation.id} className="shadow-none border border-muted-foreground/20 rounded-xl">
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold">{reservation.customer_name}</p>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${statusClass}`}>
+                        {reservation.status}
                       </span>
-                      <span className="flex items-center gap-1">
-                        <Users className="h-3 w-3" />
-                        {reservation.party_size} guests
-                      </span>
-                      {reservation.customer_phone && (
-                        <span className="flex items-center gap-1">
-                          <Phone className="h-3 w-3" />
-                          {reservation.customer_phone}
-                        </span>
-                      )}
-                      {effectiveTable && (
-                        <span className="flex items-center gap-1">
-                          <Armchair className="h-3 w-3" />
-                          Table #{effectiveTable.table_number}
-                        </span>
-                      )}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <Badge variant="outline" className="bg-background">
-                        Next: {nextAction}
-                      </Badge>
-                      {effectiveTable && (
-                        <Badge variant="secondary" className="font-normal">
-                          Assigned #{effectiveTable.table_number} • {effectiveTable.status}
-                        </Badge>
-                      )}
-                    </div>
-                    {suggestedTables.length > 0 && !effectiveTable && (
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-muted-foreground">Suggested tables:</span>
-                        {suggestedTables.map((table) => (
-                          <Badge key={table.id} variant="secondary" className="font-normal">
-                            #{table.table_number} • {table.capacity} seats • {table.location_zone || "main"}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                    {reservation.notes && <p className="text-xs text-muted-foreground">{reservation.notes}</p>}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                    {isHost ? (
-                      <div className="max-w-sm rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                        To edit this reservation, send guest name, reservation time, and requested change to the restaurant team.
-                      </div>
-                    ) : (
-                      <>
-                        {eligibleTables.length > 0 && (
-                          <Select
-                            value={selectedTables[reservation.id] || effectiveTable?.id || ""}
-                            onValueChange={(value) => setSelectedTables((current) => ({ ...current, [reservation.id]: value }))}
-                            disabled={isBusy}
-                          >
-                            <SelectTrigger className="h-8 w-48 text-xs">
-                              <SelectValue placeholder="Choose table" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {eligibleTables.map((table) => (
-                                <SelectItem key={table.id} value={table.id}>
-                                  #{table.table_number} • {table.capacity} seats • {table.location_zone || "main"} • {table.status}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-
-                        <Select value={reservation.status} onValueChange={(value) => updateStatus(reservation.id, value)} disabled={isBusy}>
-                          <SelectTrigger className="h-8 w-36 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {RESERVATION_STATUSES.map((status) => (
-                              <SelectItem key={status} value={status} className="capitalize">
-                                {status.replace(/_/g, " ")}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-
-                        {reservation.status === "pending" && (
-                          <Button size="sm" variant="outline" disabled={isBusy} onClick={() => reserveSuggestedTable(reservation)}>
-                            Hold Table
-                          </Button>
-                        )}
-
-                        {["pending", "confirmed"].includes(reservation.status) && (
-                          <Button size="sm" disabled={isBusy} onClick={() => seatReservation(reservation)}>
-                            Seat Guest
-                          </Button>
-                        )}
-
-                        {reservation.status === "seated" && effectiveTable && (
-                          <Button size="sm" variant="outline" disabled={isBusy} onClick={() => releaseTableForReservation(reservation)}>
-                            Complete
-                          </Button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-
-        {!initialLoading && filteredReservations.length === 0 && (
-          <div className="py-12 text-center text-muted-foreground">No reservations match the current filters</div>
+                    <p className="text-sm text-muted-foreground">
+                      {reservationDate.toLocaleString([], { dateStyle: "short", timeStyle: "short" })} • {reservation.party_size} guests
+                    </p>
+                    {reservation.table ? (
+                      <p className="text-sm text-muted-foreground">Table {reservation.table.table_number}</p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
   );
 }
+
+// ==========================================
+// 2. GIAO DIỆN ADMIN: HIỂN THỊ DASHBOARD & GHÉP BÀN
+// ==========================================
+function AdminReservationsDashboard() {
+  const { toast } = useToast();
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<(typeof RESERVATION_STATUSES)[number]>("all");
+  const [activeTab, setActiveTab] = useState("host-board");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMutatingByReservation, setIsMutatingByReservation] = useState<Record<string, boolean>>({});
+  const [selectedTableByReservation, setSelectedTableByReservation] = useState<Record<string, string>>({});
+  const fetchVersionRef = useRef(0);
+
+  const fetchData = async () => {
+    const fetchVersion = ++fetchVersionRef.current;
+    try {
+      const [resData, tablesData] = await Promise.all([
+        api.get<Reservation[]>("/reservations?sort=reservation_time"),
+        api.get<RestaurantTableApi[]>("/tables")
+      ]);
+      if (fetchVersion !== fetchVersionRef.current) return;
+
+      const normalizedTables: RestaurantTable[] = tablesData.map((table) => ({
+        id: table.id,
+        status: table.status,
+        table_number: Number(table.table_number ?? table.tableNumber ?? 0),
+        capacity: Number(table.capacity ?? 0),
+      }));
+
+      setReservations(resData);
+      setTables(normalizedTables);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchData();
+    const interval = window.setInterval(() => fetchData(), REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const setReservationMutating = (reservationId: string, isMutating: boolean) => {
+    setIsMutatingByReservation((prev) => ({
+      ...prev,
+      [reservationId]: isMutating,
+    }));
+  };
+
+  const handleStatusUpdate = async (reservation: Reservation, nextStatus: string) => {
+    if (reservation.status === nextStatus || isMutatingByReservation[reservation.id]) return;
+
+    setReservationMutating(reservation.id, true);
+    try {
+      const updated = await api.patch<{ id: string; status: string }>(`/reservations/${reservation.id}/status`, {
+        status: nextStatus,
+      });
+
+      setReservations((prev) =>
+        prev.map((entry) => (entry.id === updated.id ? { ...entry, status: updated.status } : entry))
+      );
+
+      toast({
+        title: "Status updated",
+        description: `Reservation moved to ${updated.status}.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Could not update status",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setReservationMutating(reservation.id, false);
+    }
+  };
+
+  const handleAssignAndConfirm = async (reservation: Reservation) => {
+    if (reservation.table || isMutatingByReservation[reservation.id]) return;
+
+    const selectedTableId = selectedTableByReservation[reservation.id];
+    if (!selectedTableId) {
+      toast({
+        title: "Table is required",
+        description: "Please select a table first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const selectedTable = tables.find((table) => table.id === selectedTableId);
+    if (!selectedTable || selectedTable.status !== "available") {
+      toast({
+        title: "Table unavailable",
+        description: "Selected table is no longer available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setReservationMutating(reservation.id, true);
+    try {
+      await api.patch(`/tables/${selectedTableId}/status`, { status: "reserved" });
+      if (reservation.status !== "confirmed") {
+        await api.patch(`/reservations/${reservation.id}/status`, { status: "confirmed" });
+      }
+
+      setTables((prev) =>
+        prev.map((table) => (table.id === selectedTableId ? { ...table, status: "reserved" } : table))
+      );
+      setReservations((prev) =>
+        prev.map((entry) =>
+          entry.id === reservation.id
+            ? {
+                ...entry,
+                status: "confirmed",
+                table: {
+                  id: selectedTable.id,
+                  table_number: selectedTable.table_number,
+                  status: "reserved",
+                },
+              }
+            : entry
+        )
+      );
+
+      toast({
+        title: "Assigned successfully",
+        description: `Table ${selectedTable.table_number} assigned and reservation confirmed.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Assignment failed",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setReservationMutating(reservation.id, false);
+    }
+  };
+
+  const metrics = useMemo(() => {
+    const now = new Date().getTime();
+    let arrivingSoon = 0; let needTableHold = 0; let readyToSeat = 0;
+    reservations.forEach((res) => {
+      const diffMins = (new Date(res.reservation_time).getTime() - now) / (1000 * 60);
+      if (["pending", "confirmed"].includes(res.status)) {
+        if (diffMins > -30 && diffMins <= 30) arrivingSoon++;
+        if (!res.table) needTableHold++;
+        if (res.table && res.table.status === "available") readyToSeat++;
+      }
+    });
+    return { arrivingSoon, needTableHold, readyToSeat };
+  }, [reservations]);
+
+  const filteredReservations = useMemo(() => {
+    return reservations.filter(res => {
+      const matchesSearch = res.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            (res.customer_phone && res.customer_phone.includes(searchQuery));
+      const matchesStatus = statusFilter === "all" || res.status === statusFilter;
+      const reservationDate = new Date(res.reservation_time);
+      const now = new Date();
+      const isToday = reservationDate.toDateString() === now.toDateString();
+      const isUpcoming = reservationDate.getTime() > now.getTime();
+
+      const matchesTab =
+        activeTab === "host-board"
+          ? ["pending", "confirmed"].includes(res.status)
+          : activeTab === "today"
+            ? isToday
+            : isUpcoming;
+
+      return matchesSearch && matchesStatus && matchesTab;
+    });
+  }, [reservations, searchQuery, statusFilter, activeTab]);
+
+  const availableTables = useMemo(
+    () => tables.filter((table) => table.status === "available").sort((a, b) => a.table_number - b.table_number),
+    [tables]
+  );
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto pb-10">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight mb-2">Reservations Dashboard</h1>
+        <p className="text-muted-foreground text-sm">
+          Admin view: Review incoming booking requests, approve status, and assign tables.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <MetricCard title="Arriving soon" count={metrics.arrivingSoon} icon={<Clock className="w-5 h-5 text-yellow-600" />} />
+        <MetricCard title="Need table assignment" count={metrics.needTableHold} icon={<Sparkles className="w-5 h-5 text-blue-500" />} />
+        <MetricCard title="Ready to seat" count={metrics.readyToSeat} icon={<CheckCircle className="w-5 h-5 text-orange-500" />} />
+      </div>
+
+      <div className="flex flex-col md:flex-row items-center gap-3">
+        <div className="relative w-full md:w-[280px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search guest or phone" className="pl-9" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+        </div>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            if (RESERVATION_STATUSES.includes(value as (typeof RESERVATION_STATUSES)[number])) {
+              setStatusFilter(value as (typeof RESERVATION_STATUSES)[number]);
+            }
+          }}
+        >
+          <SelectTrigger className="w-full md:w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+          <SelectContent>
+            {RESERVATION_STATUSES.map(s => (<SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>))}
+          </SelectContent>
+        </Select>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-auto">
+          <TabsList className="bg-muted/30">
+            <TabsTrigger value="host-board">Pending Approvals</TabsTrigger>
+            <TabsTrigger value="today">Today</TabsTrigger>
+            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      <div className="space-y-4">
+        {isLoading ? (
+          Array.from({ length: 3 }).map((_, i) => (<Card key={`skel-${i}`} className="shadow-none border-muted"><CardContent className="p-6 h-32 flex items-center"><Skeleton className="h-full w-full" /></CardContent></Card>))
+        ) : filteredReservations.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground bg-muted/10 rounded-lg border border-dashed">No reservations found.</div>
+        ) : (
+          filteredReservations.map((res) => {
+            const resDate = new Date(res.reservation_time);
+            
+            // Xác định màu badge trạng thái
+            let statusBadgeClass = "bg-gray-100 text-gray-700";
+            if (res.status === "confirmed") statusBadgeClass = "bg-blue-50 text-blue-600";
+            if (res.status === "pending") statusBadgeClass = "bg-yellow-50 text-yellow-600";
+
+            return (
+              <Card key={res.id} className="shadow-none border border-muted-foreground/20 rounded-xl overflow-hidden">
+                <CardContent className="p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  
+                  <div className="space-y-3 flex-1">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className="font-mono text-base font-semibold">{res.customer_name}</h3>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${statusBadgeClass}`}>
+                        {res.status}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> {resDate.toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}</span>
+                      <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> {res.party_size} guests</span>
+                      <span className="flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> {res.customer_phone || "N/A"}</span>
+                    </div>
+
+                    {res.notes && <p className="text-sm text-muted-foreground mt-1 border-l-2 pl-2 italic">{res.notes}</p>}
+                  </div>
+
+                  {/* Hành động của Admin */}
+                  <div className="flex flex-col gap-2 min-w-[200px]">
+                    {!res.table ? (
+                      <>
+                        <Select
+                          value={selectedTableByReservation[res.id] || ""}
+                          onValueChange={(value) =>
+                            setSelectedTableByReservation((prev) => ({
+                              ...prev,
+                              [res.id]: value,
+                            }))
+                          }
+                          disabled={Boolean(isMutatingByReservation[res.id])}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Choose table" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableTables.map((table) => (
+                              <SelectItem key={table.id} value={table.id}>
+                                Table {table.table_number}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={Boolean(isMutatingByReservation[res.id]) || availableTables.length === 0}
+                          onClick={() => void handleAssignAndConfirm(res)}
+                          className="w-full text-blue-600 border-blue-200 bg-blue-50 hover:bg-blue-100"
+                        >
+                          <TableProperties className="w-4 h-4 mr-2" />
+                          {isMutatingByReservation[res.id] ? "Assigning..." : "Assign & Confirm"}
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between bg-muted/50 px-3 py-2 rounded-md text-sm">
+                        <span className="flex items-center gap-2"><TableProperties className="w-4 h-4" /> Table {res.table.table_number}</span>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">Edit</Button>
+                      </div>
+                    )}
+                    <Select
+                      value={res.status}
+                      onValueChange={(value) => void handleStatusUpdate(res, value)}
+                      disabled={Boolean(isMutatingByReservation[res.id])}
+                    >
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Update Status" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="confirmed">Confirmed</SelectItem>
+                        <SelectItem value="seated">Seated</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                </CardContent>
+              </Card>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ title, count, icon }: { title: string, count: number, icon: React.ReactNode }) {
+  return (
+    <Card className="shadow-none border border-muted-foreground/20 rounded-xl">
+      <CardContent className="flex items-start p-4 gap-3">
+        <div className="rounded-md bg-muted/30 p-2 flex items-center justify-center">{icon}</div>
+        <div className="flex flex-col">
+          <p className="text-sm text-muted-foreground font-medium">{title}</p>
+          <p className="text-2xl font-bold mt-1">{count}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
