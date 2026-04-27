@@ -79,7 +79,9 @@ export default function BillingPage() {
   const [historyTotalPages, setHistoryTotalPages] = useState(1);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [paymentOptions, setPaymentOptions] = useState<Record<string, { tip: string; promotionCode: string }>>({});
+  const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
   const [processingTableKey, setProcessingTableKey] = useState<string | null>(null);
+  const [splittingOrderId, setSplittingOrderId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const { toast } = useToast();
@@ -174,19 +176,38 @@ export default function BillingPage() {
   const processPayment = async (orderId: string, method: string) => {
     const order = orders.find((item) => item.id === orderId);
     if (!order) return;
-
-    await payOrder(order, method);
-    if (order.table_id) {
-      await api.patch(`/tables/${order.table_id}/status`, { status: "available" });
+    if (processingOrderId || processingTableKey) {
+      toast({ title: "Payment in progress", description: "Please wait for the current payment to finish." });
+      return;
     }
-    toast({ title: "Payment processed!" });
-    await fetchOrders();
-    await fetchBillingRecords(1);
+
+    setProcessingOrderId(orderId);
+    try {
+      await payOrder(order, method);
+      if (order.table_id) {
+        await api.patch(`/tables/${order.table_id}/status`, { status: "available" });
+      }
+      toast({ title: "Payment processed!" });
+      await fetchOrders();
+      await fetchBillingRecords(1);
+    } catch (err) {
+      toast({
+        title: "Could not process payment",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingOrderId(null);
+    }
   };
 
   const processTablePayment = async (group: OrderGroup) => {
     const unpaidOrders = group.orders.filter((order) => order.payment_status === "unpaid");
-    if (unpaidOrders.length === 0 || processingTableKey) return;
+    if (unpaidOrders.length === 0) return;
+    if (processingTableKey || processingOrderId) {
+      toast({ title: "Payment in progress", description: "Please wait for the current payment to finish." });
+      return;
+    }
 
     setProcessingTableKey(group.key);
     try {
@@ -216,15 +237,30 @@ export default function BillingPage() {
   };
 
   const splitEvenly = async (orderId: string) => {
-    await api.post(`/billing/orders/${orderId}/split-bill`, {
-      mode: "even",
-      guest_count: 2,
-    });
-    toast({ title: "Bill split evenly" });
-    await fetchOrders();
+    if (splittingOrderId) {
+      toast({ title: "Split in progress", description: "Please wait for the current split to finish." });
+      return;
+    }
+
+    setSplittingOrderId(orderId);
+    try {
+      await api.post(`/billing/orders/${orderId}/split-bill`, {
+        mode: "even",
+        guest_count: 2,
+      });
+      toast({ title: "Bill split evenly" });
+      await fetchOrders();
+    } finally {
+      setSplittingOrderId(null);
+    }
   };
 
   const splitByItems = async (order: Order) => {
+    if (splittingOrderId) {
+      toast({ title: "Split in progress", description: "Please wait for the current split to finish." });
+      return;
+    }
+
     const parties = [
       {
         party_name: "Guest 1",
@@ -245,12 +281,17 @@ export default function BillingPage() {
       return;
     }
 
-    await api.post(`/billing/orders/${order.id}/split-bill`, {
-      mode: "items",
-      parties,
-    });
-    toast({ title: "Bill split by items" });
-    await fetchOrders();
+    setSplittingOrderId(order.id);
+    try {
+      await api.post(`/billing/orders/${order.id}/split-bill`, {
+        mode: "items",
+        parties,
+      });
+      toast({ title: "Bill split by items" });
+      await fetchOrders();
+    } finally {
+      setSplittingOrderId(null);
+    }
   };
 
   return (
@@ -296,7 +337,11 @@ export default function BillingPage() {
                 <Button
                   size="sm"
                   onClick={() => processTablePayment(group)}
-                  disabled={!group.orders.some((order) => order.payment_status === "unpaid") || processingTableKey === group.key}
+                  disabled={
+                    !group.orders.some((order) => order.payment_status === "unpaid") ||
+                    processingTableKey !== null ||
+                    processingOrderId !== null
+                  }
                 >
                   <Banknote className="mr-1 h-3 w-3" />
                   {processingTableKey === group.key ? "Processing..." : "Pay table"}
@@ -347,6 +392,7 @@ export default function BillingPage() {
                                 min="0"
                                 step="0.01"
                                 placeholder="Tip"
+                                disabled={processingOrderId === order.id || processingTableKey !== null}
                                 value={paymentOptions[order.id]?.tip ?? "0"}
                                 onChange={(event) =>
                                   setPaymentOptions((prev) => ({
@@ -360,6 +406,7 @@ export default function BillingPage() {
                               />
                               <Input
                                 placeholder="Promo"
+                                disabled={processingOrderId === order.id || processingTableKey !== null}
                                 value={paymentOptions[order.id]?.promotionCode ?? ""}
                                 onChange={(event) =>
                                   setPaymentOptions((prev) => ({
@@ -373,22 +420,47 @@ export default function BillingPage() {
                               />
                             </div>
                             <div className="flex gap-1">
-                              <Button size="sm" variant="outline" onClick={() => splitEvenly(order.id)}>
-                                <Split className="h-3 w-3 mr-1" /> Even
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={splittingOrderId !== null || processingOrderId !== null || processingTableKey !== null}
+                                onClick={() => splitEvenly(order.id)}
+                              >
+                                <Split className="h-3 w-3 mr-1" /> {splittingOrderId === order.id ? "Splitting..." : "Even"}
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => splitByItems(order)}>
-                                <Split className="h-3 w-3 mr-1" /> Items
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={splittingOrderId !== null || processingOrderId !== null || processingTableKey !== null}
+                                onClick={() => splitByItems(order)}
+                              >
+                                <Split className="h-3 w-3 mr-1" /> {splittingOrderId === order.id ? "Splitting..." : "Items"}
                               </Button>
                             </div>
                             <div className="flex gap-1">
-                              <Button size="sm" variant="outline" onClick={() => processPayment(order.id, "cash")}>
-                                <Banknote className="h-3 w-3 mr-1" /> Cash
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={processingOrderId !== null || processingTableKey !== null}
+                                onClick={() => processPayment(order.id, "cash")}
+                              >
+                                <Banknote className="h-3 w-3 mr-1" /> {processingOrderId === order.id ? "Processing..." : "Cash"}
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => processPayment(order.id, "card")}>
-                                <CreditCard className="h-3 w-3 mr-1" /> Card
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={processingOrderId !== null || processingTableKey !== null}
+                                onClick={() => processPayment(order.id, "card")}
+                              >
+                                <CreditCard className="h-3 w-3 mr-1" /> {processingOrderId === order.id ? "Processing..." : "Card"}
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => processPayment(order.id, "digital")}>
-                                <Smartphone className="h-3 w-3 mr-1" /> Digital
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={processingOrderId !== null || processingTableKey !== null}
+                                onClick={() => processPayment(order.id, "digital")}
+                              >
+                                <Smartphone className="h-3 w-3 mr-1" /> {processingOrderId === order.id ? "Processing..." : "Digital"}
                               </Button>
                             </div>
                           </div>

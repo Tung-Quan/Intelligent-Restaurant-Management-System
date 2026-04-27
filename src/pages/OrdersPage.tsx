@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import { PageHeader } from "@/components/PageHeader";
@@ -64,6 +64,9 @@ export default function OrdersPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [busyOrderAction, setBusyOrderAction] = useState<string | null>(null);
+  const inFlightOrderKeyRef = useRef<string | null>(null);
   const { toast } = useToast();
 
   const fetchData = async () => {
@@ -121,21 +124,35 @@ export default function OrdersPage() {
   };
 
   const submitOrder = async () => {
+    if (placingOrder) {
+      toast({ title: "Order is already being placed", description: "Please wait for the current request to finish." });
+      return;
+    }
+
     if (!selectedTable || cart.length === 0) {
       toast({ title: "Error", description: "Select a table and add items", variant: "destructive" });
       return;
     }
 
+    const payload = {
+      table_id: selectedTable,
+      special_instructions: specialInstructions || null,
+      items: cart.map((c) => ({
+        menu_item_id: c.menuItemId,
+        quantity: c.quantity,
+        notes: c.notes || "",
+      })),
+    };
+    const payloadKey = JSON.stringify(payload);
+    if (inFlightOrderKeyRef.current === payloadKey) {
+      toast({ title: "Order is already being placed", description: "Please wait for the current request to finish." });
+      return;
+    }
+
+    inFlightOrderKeyRef.current = payloadKey;
+    setPlacingOrder(true);
     try {
-      await api.post("/orders", {
-        table_id: selectedTable,
-        special_instructions: specialInstructions || null,
-        items: cart.map((c) => ({
-          menu_item_id: c.menuItemId,
-          quantity: c.quantity,
-          notes: c.notes || "",
-        })),
-      });
+      await api.post("/orders", payload);
 
       // Mark table as occupied
       await api.patch(`/tables/${selectedTable}/status`, { status: "occupied" });
@@ -152,10 +169,20 @@ export default function OrdersPage() {
         description: error instanceof Error ? error.message : "Failed to place order",
         variant: "destructive",
       });
+    } finally {
+      inFlightOrderKeyRef.current = null;
+      setPlacingOrder(false);
     }
   };
 
   const handleSendToBilling = async (orderId: string) => {
+    const actionKey = `${orderId}:ready`;
+    if (busyOrderAction) {
+      toast({ title: "Action in progress", description: "Please wait for the current order update to finish." });
+      return;
+    }
+
+    setBusyOrderAction(actionKey);
     try {
       await api.patch(`/orders/${orderId}/status`, { status: "ready" });
 
@@ -167,10 +194,19 @@ export default function OrdersPage() {
         description: error instanceof Error ? error.message : "Failed to send order to billing",
         variant: "destructive",
       });
+    } finally {
+      setBusyOrderAction(null);
     }
   };
 
   const handleCancelOrder = async (orderId: string, tableId: string | null) => {
+    const actionKey = `${orderId}:cancel`;
+    if (busyOrderAction) {
+      toast({ title: "Action in progress", description: "Please wait for the current order update to finish." });
+      return;
+    }
+
+    setBusyOrderAction(actionKey);
     try {
       await api.patch(`/orders/${orderId}/cancel`);
 
@@ -186,6 +222,8 @@ export default function OrdersPage() {
         description: error instanceof Error ? error.message : "Failed to cancel order",
         variant: "destructive",
       });
+    } finally {
+      setBusyOrderAction(null);
     }
   };
 
@@ -207,7 +245,7 @@ export default function OrdersPage() {
               
               {/* Added overflow-y-auto to this inner container instead */}
               <div className="space-y-4 flex-1 overflow-y-auto pr-4">
-                <Select value={selectedTable} onValueChange={setSelectedTable}>
+                <Select value={selectedTable} onValueChange={setSelectedTable} disabled={placingOrder}>
                   <SelectTrigger><SelectValue placeholder="Select table" /></SelectTrigger>
                   <SelectContent position="popper" className="z-[100]">
                     {tables.map((t) => (
@@ -223,6 +261,7 @@ export default function OrdersPage() {
                       <button
                         key={item.id}
                         onClick={() => addToCart(item)}
+                        disabled={placingOrder}
                         className="flex justify-between items-center p-2 rounded-lg border border-border hover:bg-muted transition-colors text-left text-sm"
                       >
                         <span>{item.name}</span>
@@ -241,7 +280,7 @@ export default function OrdersPage() {
                           <span>{c.name} x{c.quantity}</span>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold">${(c.price * c.quantity).toFixed(2)}</span>
-                            <Button variant="ghost" size="sm" onClick={() => removeFromCart(c.menuItemId)}>✕</Button>
+                            <Button variant="ghost" size="sm" disabled={placingOrder} onClick={() => removeFromCart(c.menuItemId)}>x</Button>
                           </div>
                         </div>
                       ))}
@@ -257,10 +296,11 @@ export default function OrdersPage() {
                   placeholder="Special instructions..."
                   value={specialInstructions}
                   onChange={(e) => setSpecialInstructions(e.target.value)}
+                  disabled={placingOrder}
                 />
 
-                <Button onClick={submitOrder} className="w-full">
-                  <Send className="h-4 w-4 mr-2" /> Place Order
+                <Button onClick={submitOrder} className="w-full" disabled={placingOrder || !selectedTable || cart.length === 0}>
+                  <Send className="h-4 w-4 mr-2" /> {placingOrder ? "Placing order..." : "Place Order"}
                 </Button>
               </div>
             </DialogContent>
@@ -314,20 +354,22 @@ export default function OrdersPage() {
                     <Button 
                       variant="outline" 
                       size="sm" 
+                      disabled={busyOrderAction !== null}
                       onClick={() => handleSendToBilling(order.id)}
                     >
                       <Receipt className="h-4 w-4 mr-2" />
-                      Ready
+                      {busyOrderAction === `${order.id}:ready` ? "Sending..." : "Ready"}
                     </Button>
                   )}
                   {order.status !== "completed" && order.status !== "cancelled" && (
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={busyOrderAction !== null}
                       onClick={() => handleCancelOrder(order.id, order.table_id)}
                     >
                       <XCircle className="h-4 w-4 mr-2" />
-                      Cancel
+                      {busyOrderAction === `${order.id}:cancel` ? "Cancelling..." : "Cancel"}
                     </Button>
                   )}
                 </div>

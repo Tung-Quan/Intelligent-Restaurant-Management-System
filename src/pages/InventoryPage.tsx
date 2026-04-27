@@ -25,6 +25,8 @@ export default function InventoryPage() {
   const [lowStockItems, setLowStockItems] = useState<InventoryItem[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [addingItem, setAddingItem] = useState(false);
+  const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", unit: "kg", quantity: "0", minThreshold: "10", supplier: "", costPerUnit: "0" });
   const { toast } = useToast();
 
@@ -44,7 +46,13 @@ export default function InventoryPage() {
   useEffect(() => { void fetchItems(); }, []);
 
   const addItem = async () => {
+    if (addingItem) {
+      toast({ title: "Item is already being added", description: "Please wait for the current request to finish." });
+      return;
+    }
+
     if (!form.name) { toast({ title: "Error", description: "Name required", variant: "destructive" }); return; }
+    setAddingItem(true);
     try {
       await api.post("/inventory/items", {
         name: form.name,
@@ -64,12 +72,30 @@ export default function InventoryPage() {
         description: error instanceof Error ? error.message : "Failed to add item",
         variant: "destructive",
       });
+    } finally {
+      setAddingItem(false);
     }
   };
 
   const updateQuantity = async (id: string, newQty: number) => {
-    await api.patch(`/inventory/items/${id}/quantity`, { quantity: newQty });
-    await fetchItems();
+    if (updatingItemId) {
+      toast({ title: "Quantity update in progress", description: "Please wait for the current inventory update to finish." });
+      return;
+    }
+
+    setUpdatingItemId(id);
+    try {
+      await api.patch(`/inventory/items/${id}/quantity`, { quantity: newQty });
+      await fetchItems();
+    } catch (error) {
+      toast({
+        title: "Unable to update quantity",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingItemId(null);
+    }
   };
 
   return (
@@ -85,17 +111,17 @@ export default function InventoryPage() {
             <DialogContent>
               <DialogHeader><DialogTitle className="font-heading">Add Inventory Item</DialogTitle></DialogHeader>
               <div className="space-y-3">
-                <Input placeholder="Item name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <Input placeholder="Item name *" value={form.name} disabled={addingItem} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 <div className="grid grid-cols-2 gap-2">
-                  <Input placeholder="Unit (kg, pcs...)" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
-                  <Input type="number" placeholder="Quantity" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+                  <Input placeholder="Unit (kg, pcs...)" value={form.unit} disabled={addingItem} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
+                  <Input type="number" placeholder="Quantity" value={form.quantity} disabled={addingItem} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Input type="number" placeholder="Min threshold" value={form.minThreshold} onChange={(e) => setForm({ ...form, minThreshold: e.target.value })} />
-                  <Input type="number" placeholder="Cost/unit" value={form.costPerUnit} onChange={(e) => setForm({ ...form, costPerUnit: e.target.value })} />
+                  <Input type="number" placeholder="Min threshold" value={form.minThreshold} disabled={addingItem} onChange={(e) => setForm({ ...form, minThreshold: e.target.value })} />
+                  <Input type="number" placeholder="Cost/unit" value={form.costPerUnit} disabled={addingItem} onChange={(e) => setForm({ ...form, costPerUnit: e.target.value })} />
                 </div>
-                <Input placeholder="Supplier" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} />
-                <Button onClick={addItem} className="w-full">Add Item</Button>
+                <Input placeholder="Supplier" value={form.supplier} disabled={addingItem} onChange={(e) => setForm({ ...form, supplier: e.target.value })} />
+                <Button onClick={addItem} className="w-full" disabled={addingItem}>{addingItem ? "Adding..." : "Add Item"}</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -159,9 +185,15 @@ export default function InventoryPage() {
                   )}
                 </div>
                 <div className="mt-3 flex gap-1">
-                  <Button size="sm" variant="outline" onClick={() => updateQuantity(item.id, Number(item.quantity) - 1)}>-1</Button>
-                  <Button size="sm" variant="outline" onClick={() => updateQuantity(item.id, Number(item.quantity) + 1)}>+1</Button>
-                  <Button size="sm" variant="outline" onClick={() => updateQuantity(item.id, Number(item.quantity) + 10)}>+10</Button>
+                  <Button size="sm" variant="outline" disabled={updatingItemId !== null} onClick={() => updateQuantity(item.id, Number(item.quantity) - 1)}>
+                    {updatingItemId === item.id ? "..." : "-1"}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={updatingItemId !== null} onClick={() => updateQuantity(item.id, Number(item.quantity) + 1)}>
+                    {updatingItemId === item.id ? "..." : "+1"}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={updatingItemId !== null} onClick={() => updateQuantity(item.id, Number(item.quantity) + 10)}>
+                    {updatingItemId === item.id ? "..." : "+10"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

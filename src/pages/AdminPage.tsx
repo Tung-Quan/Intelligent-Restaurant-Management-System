@@ -89,6 +89,7 @@ export default function AdminPage() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [creatingAdminItem, setCreatingAdminItem] = useState<"category" | "menu" | "table" | null>(null);
   const [busyStaffUserId, setBusyStaffUserId] = useState<string | null>(null);
   const [busyMenuItemId, setBusyMenuItemId] = useState<string | null>(null);
   const [busyTableId, setBusyTableId] = useState<string | null>(null);
@@ -164,11 +165,17 @@ export default function AdminPage() {
   }, [refreshAdminData]);
 
   const addCategory = async () => {
+    if (creatingAdminItem) {
+      toast({ title: "Save in progress", description: "Please wait for the current admin change to finish." });
+      return;
+    }
+
     if (!catForm.name.trim()) {
       toast({ title: "Category name is required", variant: "destructive" });
       return;
     }
 
+    setCreatingAdminItem("category");
     try {
       await api.post("/admin/menu-categories", {
         name: catForm.name.trim(),
@@ -184,10 +191,17 @@ export default function AdminPage() {
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setCreatingAdminItem(null);
     }
   };
 
   const addMenuItem = async () => {
+    if (creatingAdminItem) {
+      toast({ title: "Save in progress", description: "Please wait for the current admin change to finish." });
+      return;
+    }
+
     const parsedPrice = parseFloat(menuForm.price);
     const parsedPrepTime = parseInt(menuForm.prepTime, 10);
 
@@ -206,6 +220,7 @@ export default function AdminPage() {
       return;
     }
 
+    setCreatingAdminItem("menu");
     try {
       await api.post("/admin/menu-items", {
         name: menuForm.name.trim(),
@@ -224,10 +239,17 @@ export default function AdminPage() {
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setCreatingAdminItem(null);
     }
   };
 
   const addTable = async () => {
+    if (creatingAdminItem) {
+      toast({ title: "Save in progress", description: "Please wait for the current admin change to finish." });
+      return;
+    }
+
     const tableNumber = parseInt(tableForm.number, 10);
     const capacity = parseInt(tableForm.capacity, 10);
 
@@ -241,6 +263,7 @@ export default function AdminPage() {
       return;
     }
 
+    setCreatingAdminItem("table");
     try {
       await api.post("/admin/tables", {
         table_number: tableNumber,
@@ -257,10 +280,14 @@ export default function AdminPage() {
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setCreatingAdminItem(null);
     }
   };
 
   const toggleAvailability = async (id: string, current: boolean) => {
+    if (busyMenuItemId) return;
+
     setBusyMenuItemId(id);
     try {
       await api.patch(`/admin/menu-items/${id}/availability`, { is_available: !current });
@@ -277,6 +304,8 @@ export default function AdminPage() {
   };
 
   const updateTableStatus = async (id: string, status: string) => {
+    if (busyTableId) return;
+
     setBusyTableId(id);
     try {
       await api.patch(`/tables/${id}/status`, { status });
@@ -293,6 +322,11 @@ export default function AdminPage() {
   };
 
   const assignRole = async (userId: string, role: AppRole) => {
+    if (busyStaffUserId) {
+      toast({ title: "Role update in progress", description: "Please wait for the current role change to finish." });
+      return;
+    }
+
     setBusyStaffUserId(userId);
     try {
       await api.post(`/admin/staff/${userId}/roles`, { role });
@@ -310,6 +344,11 @@ export default function AdminPage() {
   };
 
   const removeRole = async (userId: string, role: AppRole) => {
+    if (busyStaffUserId) {
+      toast({ title: "Role update in progress", description: "Please wait for the current role change to finish." });
+      return;
+    }
+
     if (userId === currentUser?.id && role === "admin") {
       toast({ title: "You cannot remove your own admin role", variant: "destructive" });
       return;
@@ -517,8 +556,8 @@ export default function AdminPage() {
                       value={catForm.description}
                       onChange={(event) => setCatForm({ ...catForm, description: event.target.value })}
                     />
-                    <Button onClick={addCategory} className="w-full">
-                      Add
+                    <Button onClick={addCategory} className="w-full" disabled={creatingAdminItem !== null}>
+                      {creatingAdminItem === "category" ? "Adding..." : "Add"}
                     </Button>
                   </div>
                 </DialogContent>
@@ -592,8 +631,8 @@ export default function AdminPage() {
                         </option>
                       ))}
                     </select>
-                    <Button onClick={addMenuItem} className="w-full">
-                      Add
+                    <Button onClick={addMenuItem} className="w-full" disabled={creatingAdminItem !== null}>
+                      {creatingAdminItem === "menu" ? "Adding..." : "Add"}
                     </Button>
                   </div>
                 </DialogContent>
@@ -672,8 +711,8 @@ export default function AdminPage() {
                       value={tableForm.zone}
                       onChange={(event) => setTableForm({ ...tableForm, zone: event.target.value })}
                     />
-                    <Button onClick={addTable} className="w-full">
-                      Add Table
+                    <Button onClick={addTable} className="w-full" disabled={creatingAdminItem !== null}>
+                      {creatingAdminItem === "table" ? "Adding..." : "Add Table"}
                     </Button>
                   </div>
                 </DialogContent>
@@ -794,7 +833,11 @@ export default function AdminPage() {
                             key={role}
                             className={`${ROLE_COLORS[role]} cursor-pointer text-xs transition-opacity hover:opacity-80`}
                             aria-disabled={busyStaffUserId === member.user_id}
-                            onClick={() => removeRole(member.user_id, role)}
+                            onClick={() => {
+                              if (busyStaffUserId === null) {
+                                removeRole(member.user_id, role);
+                              }
+                            }}
                             title={`Click to remove "${role}" role`}
                           >
                             {role === "admin" ? <ShieldAlert className="mr-1 h-3 w-3" /> : <ShieldCheck className="mr-1 h-3 w-3" />}

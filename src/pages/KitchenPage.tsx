@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import { Clock, ChefHat } from "lucide-react";
 
 interface KitchenOrder {
@@ -28,6 +29,8 @@ interface KitchenOrder {
 export default function KitchenPage() {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const fetchOrders = async () => {
     try {
@@ -47,8 +50,24 @@ export default function KitchenPage() {
   });
 
   const updateItemStatus = async (itemId: string, newStatus: string) => {
-    await api.patch(`/order-items/${itemId}/status`, { status: newStatus });
-    await fetchOrders();
+    if (updatingItemId) {
+      toast({ title: "Item update in progress", description: "Please wait for the current kitchen update to finish." });
+      return;
+    }
+
+    setUpdatingItemId(itemId);
+    try {
+      await api.patch(`/order-items/${itemId}/status`, { status: newStatus });
+      await fetchOrders();
+    } catch (error) {
+      toast({
+        title: "Unable to update item",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingItemId(null);
+    }
   };
 
   const statusFlow: Record<string, string> = {
@@ -143,9 +162,10 @@ export default function KitchenPage() {
                           size="sm"
                           variant="outline"
                           className="text-xs h-7"
+                          disabled={updatingItemId !== null}
                           onClick={() => updateItemStatus(item.id, statusFlow[item.status])}
                         >
-                          {statusFlow[item.status]}
+                          {updatingItemId === item.id ? "Updating..." : statusFlow[item.status]}
                         </Button>
                       )}
                     </div>

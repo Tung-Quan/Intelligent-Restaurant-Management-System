@@ -87,7 +87,7 @@ export default function TablesPage() {
   const [zoneFilter, setZoneFilter] = useState<string>("all");
   const [initialLoading, setInitialLoading] = useState(true);
   const [updatingTableId, setUpdatingTableId] = useState<string | null>(null);
-  const lastCreatedOrderKeyRef = useRef<string | null>(null);
+  const inFlightOrderKeyRef = useRef<string | null>(null);
   const { hasRole } = useAuth();
 
   const isHost = hasRole("host") && !hasRole("admin") && !hasRole("manager");
@@ -186,7 +186,11 @@ export default function TablesPage() {
   };
 
   const createOrderForChef = async () => {
-    if (!canPlaceOrders || creatingOrder) return;
+    if (!canPlaceOrders) return;
+    if (creatingOrder) {
+      toast({ title: "Order is already being sent", description: "Please wait for the current request to finish." });
+      return;
+    }
 
     if (!selectedTable) {
       toast({ title: "Select a table", description: "Choose a table before sending order.", variant: "destructive" });
@@ -211,15 +215,15 @@ export default function TablesPage() {
 
 
     const payloadKey = JSON.stringify(payload);
-    if (lastCreatedOrderKeyRef.current === payloadKey) {
-      toast({ title: "Already sent", description: "This exact order was already sent to chef." });
+    if (inFlightOrderKeyRef.current === payloadKey) {
+      toast({ title: "Order is already being sent", description: "Please wait for the current request to finish." });
       return;
     }
 
+    inFlightOrderKeyRef.current = payloadKey;
     setCreatingOrder(true);
     try {
       await api.post<{ id: string; status: string }>("/orders", payload);
-      lastCreatedOrderKeyRef.current = payloadKey;
       setCartByItemId({});
       setSpecialInstructions("");
 
@@ -238,6 +242,7 @@ export default function TablesPage() {
         variant: "destructive",
       });
     } finally {
+      inFlightOrderKeyRef.current = null;
       setCreatingOrder(false);
     }
   };
@@ -496,11 +501,23 @@ export default function TablesPage() {
                           <p className="text-xs text-muted-foreground">${item.price.toFixed(2)}</p>
                         </div>
                         <div className="flex items-center gap-1">
-                          <Button size="sm" variant="outline" className="h-7 w-7 px-0" onClick={() => changeQuantity(item.id, -1)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 w-7 px-0"
+                            disabled={creatingOrder}
+                            onClick={() => changeQuantity(item.id, -1)}
+                          >
                             -
                           </Button>
                           <span className="w-6 text-center text-sm font-semibold">{quantity}</span>
-                          <Button size="sm" variant="outline" className="h-7 w-7 px-0" onClick={() => changeQuantity(item.id, 1)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 w-7 px-0"
+                            disabled={creatingOrder}
+                            onClick={() => changeQuantity(item.id, 1)}
+                          >
                             +
                           </Button>
                         </div>
