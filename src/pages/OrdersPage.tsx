@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Send } from "lucide-react";
+import { Plus, Send, Receipt, XCircle } from "lucide-react";
 
 interface MenuItem {
   id: string;
@@ -28,6 +29,10 @@ interface OrderSummary {
   id: string;
   status: string;
   total_amount: number;
+  table_id: string | null;
+  table?: {
+    table_number: number;
+  };
   items: {
     id: string;
     menu_item_name: string;
@@ -59,7 +64,8 @@ export default function OrdersPage() {
       const [menuRes, tableRes, orderRes] = await Promise.all([
         api.get<MenuItem[]>("/menu-items?is_available=true"),
         api.get<Table[]>("/tables?sort=table_number"),
-        api.get<OrderSummary[]>("/orders?include=items,items.menu_item&limit=20&sort=-created_at"),
+        // Added 'table' to the include parameter so we can see which table ordered
+        api.get<OrderSummary[]>("/orders?include=items,items.menu_item,table&limit=20&sort=-created_at"),
       ]);
 
       setMenuItems(menuRes);
@@ -73,6 +79,10 @@ export default function OrdersPage() {
   useEffect(() => {
     void fetchData();
   }, []);
+
+  useRealtimeSync(["orders.created.for_kds", "orders.status_updated"], () => {
+    void fetchData();
+  });
 
   const addToCart = (item: MenuItem) => {
     setCart((prev) => {
@@ -101,11 +111,11 @@ export default function OrdersPage() {
         items: cart.map((c) => ({
           menu_item_id: c.menuItemId,
           quantity: c.quantity,
-          unit_price: c.price,
           notes: c.notes || "",
         })),
       });
 
+      // Mark table as occupied
       await api.patch(`/tables/${selectedTable}/status`, { status: "occupied" });
 
       toast({ title: "Order placed!" });
@@ -123,6 +133,40 @@ export default function OrdersPage() {
     }
   };
 
+  const handleSendToBilling = async (orderId: string) => {
+    try {
+      await api.patch(`/orders/${orderId}/status`, { status: "ready" });
+
+      toast({ title: "Order sent to billing" });
+      await fetchData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send order to billing",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleCancelOrder = async (orderId: string, tableId: string | null) => {
+    try {
+      await api.patch(`/orders/${orderId}/cancel`);
+
+      if (tableId) {
+        await api.patch(`/tables/${tableId}/status`, { status: "available" });
+      }
+
+      toast({ title: "Order cancelled" });
+      await fetchData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to cancel order",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -133,14 +177,17 @@ export default function OrdersPage() {
             <DialogTrigger asChild>
               <Button><Plus className="h-4 w-4 mr-2" /> New Order</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+            {/* Removed max-h & overflow from DialogContent to prevent Select dropdown clipping */}
+            <DialogContent className="max-w-2xl flex flex-col h-[85vh]">
               <DialogHeader>
                 <DialogTitle className="font-heading">New Order</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4">
+              
+              {/* Added overflow-y-auto to this inner container instead */}
+              <div className="space-y-4 flex-1 overflow-y-auto pr-4">
                 <Select value={selectedTable} onValueChange={setSelectedTable}>
                   <SelectTrigger><SelectValue placeholder="Select table" /></SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" className="z-[100]">
                     {tables.map((t) => (
                       <SelectItem key={t.id} value={t.id}>Table {t.table_number}</SelectItem>
                     ))}
@@ -215,22 +262,55 @@ export default function OrdersPage() {
               </CardContent>
             </Card>
           ))}
+          
         {!initialLoading && orders.map((order) => (
           <Card key={order.id} className="animate-fade-in">
             <CardContent className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <div>
-                  <p className="font-medium text-sm">Order #{order.id.slice(0, 8)}</p>
-                  <p className="text-xs text-muted-foreground">{order.items?.map((i) => `${i.menu_item_name} x${i.quantity}`).join(", ") || "No items"}</p>
+                  <p className="font-medium text-sm flex items-center gap-2">
+                    Order #{order.id.slice(0, 8)}
+                    {/* Display Table Number */}
+                    {order.table && (
+                      <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-bold">
+                        Table {order.table.table_number}
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {order.items?.map((i) => `${i.menu_item_name} x${i.quantity}`).join(", ") || "No items"}
+                  </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-4">
                 <span className="font-heading font-bold">${Number(order.total_amount).toFixed(2)}</span>
                 <StatusBadge status={order.status} />
+                
+                {order.status !== "completed" && order.status !== "cancelled" && order.status !== "ready" && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => handleSendToBilling(order.id)}
+                  >
+                    <Receipt className="h-4 w-4 mr-2" />
+                    Ready
+                  </Button>
+                )}
+                {order.status !== "completed" && order.status !== "cancelled" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCancelOrder(order.id, order.table_id)}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Cancel
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
         ))}
+        
         {!initialLoading && orders.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">No orders yet. Create your first order!</div>
         )}
