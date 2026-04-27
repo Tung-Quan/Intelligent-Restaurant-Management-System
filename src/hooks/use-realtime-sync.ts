@@ -8,6 +8,18 @@ export interface RealtimeEvent<TPayload = unknown> {
   published_at: string;
 }
 
+type RealtimeTransport = "auto" | "websocket" | "sse";
+
+const realtimeTransport = (import.meta.env.VITE_REALTIME_TRANSPORT || "auto") as RealtimeTransport;
+
+function shouldUseSseFirst(apiBaseUrl: string) {
+  if (realtimeTransport === "sse") return true;
+  if (realtimeTransport === "websocket") return false;
+
+  const { hostname } = new URL(apiBaseUrl);
+  return import.meta.env.PROD || hostname.endsWith(".vercel.app");
+}
+
 export function useRealtimeSync(
   eventNames: string[],
   onEvent: (event: RealtimeEvent) => void,
@@ -34,10 +46,11 @@ export function useRealtimeSync(
       }
     };
 
+    const apiBaseUrl = getApiBaseUrl();
     const startSseFallback = () => {
       if (source) return;
       const params = new URLSearchParams({ access_token: accessToken });
-      source = new EventSource(`${getApiBaseUrl()}/events/stream?${params.toString()}`);
+      source = new EventSource(`${apiBaseUrl}/events/stream?${params.toString()}`);
 
       source.onmessage = (message) => {
         try {
@@ -58,8 +71,13 @@ export function useRealtimeSync(
       }
     };
 
+    if (shouldUseSseFirst(apiBaseUrl)) {
+      startSseFallback();
+      return () => source?.close();
+    }
+
     const params = new URLSearchParams({ access_token: accessToken });
-    const websocketBaseUrl = new URL(getApiBaseUrl()).origin;
+    const websocketBaseUrl = new URL(apiBaseUrl).origin;
     socket = io(`${websocketBaseUrl}/events`, {
       auth: { token: accessToken },
       query: Object.fromEntries(params.entries()),
@@ -67,7 +85,10 @@ export function useRealtimeSync(
       reconnection: true,
     });
 
-    socket.on("connect_error", startSseFallback);
+    socket.on("connect_error", () => {
+      startSseFallback();
+      socket?.disconnect();
+    });
     socket.on("message", handleEvent);
 
     for (const eventName of eventNameList) {
