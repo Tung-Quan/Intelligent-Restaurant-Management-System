@@ -27,6 +27,21 @@ describe("reservation helpers", () => {
     ).toBe("history");
   });
 
+  it("keeps boundary reservation times in the correct urgency buckets", () => {
+    expect(
+      getReservationUrgency({ reservation_time: "2026-04-16T11:45:00.000Z", status: "pending" }, now)
+    ).toBe("imminent");
+    expect(
+      getReservationUrgency({ reservation_time: "2026-04-16T11:44:00.000Z", status: "pending" }, now)
+    ).toBe("late");
+    expect(
+      getReservationUrgency({ reservation_time: "2026-04-16T13:00:00.000Z", status: "confirmed" }, now)
+    ).toBe("soon");
+    expect(
+      getReservationUrgency({ reservation_time: "2026-04-16T13:01:00.000Z", status: "confirmed" }, now)
+    ).toBe("upcoming");
+  });
+
   it("sorts host reservations by urgency and time", () => {
     const sorted = sortReservationsForHost(
       [
@@ -38,6 +53,18 @@ describe("reservation helpers", () => {
     );
 
     expect(sorted.map((reservation) => reservation.id)).toEqual(["1", "2", "3"]);
+  });
+
+  it("uses customer name as a stable tie-breaker when urgency and time match", () => {
+    const sorted = sortReservationsForHost(
+      [
+        { id: "2", customer_name: "Bob", party_size: 2, reservation_time: "2026-04-16T12:10:00.000Z", status: "pending" },
+        { id: "1", customer_name: "Alice", party_size: 2, reservation_time: "2026-04-16T12:10:00.000Z", status: "pending" },
+      ],
+      now
+    );
+
+    expect(sorted.map((reservation) => reservation.customer_name)).toEqual(["Alice", "Bob"]);
   });
 
   it("counts host board metrics", () => {
@@ -69,5 +96,18 @@ describe("reservation helpers", () => {
     );
 
     expect(suggestions.map((table) => table.table_number)).toEqual([2, 5]);
+  });
+
+  it("breaks equal-capacity table suggestions by table number", () => {
+    const suggestions = getSuggestedTables(
+      [
+        { id: "1", table_number: 8, capacity: 4, status: "available", location_zone: "main" },
+        { id: "2", table_number: 3, capacity: 4, status: "available", location_zone: "patio" },
+        { id: "3", table_number: 1, capacity: 2, status: "available", location_zone: "main" },
+      ],
+      4
+    );
+
+    expect(suggestions.map((table) => table.table_number)).toEqual([3, 8]);
   });
 });
