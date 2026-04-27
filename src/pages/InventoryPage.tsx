@@ -22,6 +22,7 @@ interface InventoryItem {
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [lowStockItems, setLowStockItems] = useState<InventoryItem[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", unit: "kg", quantity: "0", minThreshold: "10", supplier: "", costPerUnit: "0" });
@@ -29,8 +30,12 @@ export default function InventoryPage() {
 
   const fetchItems = async () => {
     try {
-      const data = await api.get<InventoryItem[]>("/inventory/items?sort=name");
-      setItems(data);
+      const [inventoryItems, lowStock] = await Promise.all([
+        api.get<InventoryItem[]>("/inventory/items?sort=name"),
+        api.get<InventoryItem[]>("/inventory/low-stock"),
+      ]);
+      setItems(inventoryItems);
+      setLowStockItems(lowStock);
     } finally {
       setInitialLoading(false);
     }
@@ -96,6 +101,12 @@ export default function InventoryPage() {
           </Dialog>
         }
       />
+
+      {!initialLoading && lowStockItems.length > 0 && (
+        <div className="mb-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+          {lowStockItems.length} item{lowStockItems.length === 1 ? "" : "s"} below minimum stock.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {initialLoading &&
