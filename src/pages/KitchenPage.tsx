@@ -145,7 +145,7 @@ export default function KitchenPage() {
                           className="text-xs h-7"
                           onClick={() => updateItemStatus(item.id, statusFlow[item.status])}
                         >
-                          → {statusFlow[item.status]}
+                          {statusFlow[item.status]}
                         </Button>
                       )}
                     </div>

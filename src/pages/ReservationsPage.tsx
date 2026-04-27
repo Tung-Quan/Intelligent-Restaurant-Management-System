@@ -48,7 +48,7 @@ export default function ReservationsPage() {
   const { hasRole } = useAuth();
   const isAdmin = hasRole("admin") || hasRole("manager");
 
-  // Nếu là Admin, render Dashboard. Nếu không (Host), render Form đăng ký.
+  // Admins and managers see the dashboard; other reservation roles see the booking form.
   if (!isAdmin) {
     return <HostBookingForm />;
   }
@@ -57,7 +57,7 @@ export default function ReservationsPage() {
 }
 
 // ==========================================
-// 1. GIAO DIỆN HOST: CHỈ HIỂN THỊ FORM ĐẶT BÀN
+// 1. HOST VIEW: BOOKING FORM ONLY
 // ==========================================
 function HostBookingForm() {
   const { user } = useAuth();
@@ -180,7 +180,7 @@ function HostBookingForm() {
 
   return (
     <div className="max-w-4xl mx-auto py-12 px-4 space-y-8 relative">
-      {/* Background Decor (Tùy chọn mô phỏng thiết kế) */}
+      {/* Background decor */}
       <div className="text-center space-y-4 mb-10">
         <h1 className="text-3xl font-black uppercase tracking-wider">Table Reservation</h1>
         <p className="text-muted-foreground text-sm max-w-2xl mx-auto">
@@ -328,7 +328,7 @@ function HostBookingForm() {
 }
 
 // ==========================================
-// 2. GIAO DIỆN ADMIN: HIỂN THỊ DASHBOARD & GHÉP BÀN
+// 2. ADMIN VIEW: DASHBOARD AND TABLE ASSIGNMENT
 // ==========================================
 function AdminReservationsDashboard() {
   const { toast } = useToast();
@@ -561,7 +561,7 @@ function AdminReservationsDashboard() {
           filteredReservations.map((res) => {
             const resDate = new Date(res.reservation_time);
             
-            // Xác định màu badge trạng thái
+            // Choose the status badge color.
             let statusBadgeClass = "bg-gray-100 text-gray-700";
             if (res.status === "confirmed") statusBadgeClass = "bg-blue-50 text-blue-600";
             if (res.status === "pending") statusBadgeClass = "bg-yellow-50 text-yellow-600";
@@ -587,7 +587,7 @@ function AdminReservationsDashboard() {
                     {res.notes && <p className="text-sm text-muted-foreground mt-1 border-l-2 pl-2 italic">{res.notes}</p>}
                   </div>
 
-                  {/* Hành động của Admin */}
+                  {/* Admin actions */}
                   <div className="flex flex-col gap-2 min-w-[200px]">
                     {!res.table ? (
                       <>
@@ -669,4 +669,3 @@ function MetricCard({ title, count, icon }: { title: string, count: number, icon
     </Card>
   );
 }
-

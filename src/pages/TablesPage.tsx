@@ -208,7 +208,6 @@ export default function TablesPage() {
         unit_price: entry.item.price,
       })),
     };
-    console.log("SENDING ORDER PAYLOAD", payload);
 
 
     const payloadKey = JSON.stringify(payload);
@@ -330,7 +329,7 @@ export default function TablesPage() {
   return (
     <div className="flex h-full w-full flex-col gap-6 md:flex-row">
       <div className="flex-1 space-y-6">
-        <PageHeader title="Sơ đồ bàn" description="Quản lý trạng thái bàn theo thời gian thực" />
+        <PageHeader title="Table Map" description="Manage table status in real time" />
 
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
@@ -388,10 +387,10 @@ export default function TablesPage() {
 
           <Select value={zoneFilter} onValueChange={setZoneFilter}>
             <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="Tất cả khu vực" />
+              <SelectValue placeholder="All zones" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Tất cả khu vực</SelectItem>
+              <SelectItem value="all">All zones</SelectItem>
               {zones.map((zone) => (
                 <SelectItem key={zone} value={zone} className="capitalize">
                   {zone}
@@ -439,7 +438,7 @@ export default function TablesPage() {
         })}
 
         {!initialLoading && tables.length === 0 && (
-          <div className="py-12 text-center text-muted-foreground">Chưa có bàn nào được cấu hình.</div>
+          <div className="py-12 text-center text-muted-foreground">No tables have been configured yet.</div>
         )}
       </div>
 
