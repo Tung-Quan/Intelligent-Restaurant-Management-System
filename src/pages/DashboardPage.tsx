@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, ApiClientError } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,11 +27,19 @@ export default function DashboardPage() {
     todayRevenue: 0,
   });
   const [initialLoading, setInitialLoading] = useState(true);
-  const { hasRole } = useAuth();
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const { hasRole, roles } = useAuth();
+  const canViewStats = roles.length === 0 || hasRole("admin") || hasRole("manager");
 
   useEffect(() => {
+    if (!canViewStats) {
+      setInitialLoading(false);
+      return;
+    }
+
     const fetchStats = async () => {
       try {
+        setStatsError(null);
         const today = new Date().toISOString().split("T")[0];
         const data = await api.get<{
           total_orders: number;
@@ -50,12 +58,17 @@ export default function DashboardPage() {
           lowStockItems: data.low_stock_items,
           todayRevenue: data.today_revenue,
         });
+      } catch (error) {
+        const message = error instanceof ApiClientError
+          ? error.message
+          : "Dashboard summary is unavailable";
+        setStatsError(message);
       } finally {
         setInitialLoading(false);
       }
     };
     void fetchStats();
-  }, []);
+  }, [canViewStats]);
 
   const cards = [
     { label: "Today's Orders", value: stats.totalOrders, icon: UtensilsCrossed, color: "text-primary" },
@@ -94,21 +107,32 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader title="Dashboard" description="Overview of restaurant operations" />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map((card) => (
-          <Card key={card.label} className="animate-fade-in">
-            <CardContent className="flex items-center gap-4 p-5">
-              <div className={`flex h-12 w-12 items-center justify-center rounded-xl bg-muted ${card.color}`}>
-                <card.icon className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">{card.label}</p>
-                {initialLoading ? <Skeleton className="mt-2 h-8 w-24" /> : <p className="font-heading text-2xl font-bold">{card.value}</p>}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {canViewStats && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {cards.map((card) => (
+            <Card key={card.label} className="animate-fade-in">
+              <CardContent className="flex items-center gap-4 p-5">
+                <div className={`flex h-12 w-12 items-center justify-center rounded-xl bg-muted ${card.color}`}>
+                  <card.icon className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">{card.label}</p>
+                  {initialLoading ? <Skeleton className="mt-2 h-8 w-24" /> : <p className="font-heading text-2xl font-bold">{card.value}</p>}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {statsError && (
+        <Card className="mt-6 border-destructive/40">
+          <CardContent className="flex items-center gap-3 p-4 text-sm text-destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <span>{statsError}</span>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="mt-6">
         <CardHeader>
